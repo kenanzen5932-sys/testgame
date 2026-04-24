@@ -379,6 +379,8 @@
   // Listener: master'dan gelen round state
   function onRoundState(data) {
     if (_isMaster) return; // master kendi state'ini zaten biliyor
+    // Sync loop'u durdur — artık master'dan alıyoruz
+    if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; console.log("%c[BRIDGE] Sync loop durduruldu → Master'dan alıyorum", "color: orange;"); }
     _currentRoundId = data.roundId;
     _currentState = data.state;
 
@@ -929,11 +931,14 @@
         if (result && result.success) {
           _userCoins = result.coins || 0;
         }
-        // Init mesajını senkron modda gönder (round bilgisi PieSocket'ten gelecek)
+        // Init mesajını HEMEN gönder — oyun bekleyemez
         var syncInfo = getSyncRoundInfo();
         sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
         _currentRoundId = syncInfo.roundId;
         _currentState = syncInfo.state;
+        // Sync loop'u HEMEN başlat — PieSocket master olunca üstüne yazılacak
+        console.log("%c[BRIDGE] Sync loop hemen başlatılıyor (PieSocket beklenmeden)", "color: yellow;");
+        startLocalGameLoop();
       });
 
       // PieSocket bağlan — master election otomatik olur
@@ -945,6 +950,8 @@
   // Master olarak oyun döngüsünü başlat
   function startMasterGameLoop() {
     console.log("%c[BRIDGE] Master game loop başlatılıyor...", "color: gold; font-weight: bold;");
+    // Sync loop'u durdur — master artık EF ile yönetecek
+    if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; console.log("%c[BRIDGE] Sync loop durduruldu → Master EF moduna geçiyor", "color: orange;"); }
     // Senkron bilgisini al ve EF ile round başlat
     callGameEngine("start_game").then(function (startRes) {
       if (startRes && startRes.success) {
