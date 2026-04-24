@@ -1590,27 +1590,28 @@
   }, 300);
   setTimeout(function () { clearInterval(netInterval); }, 15000);
 
-  // GlobalContext modülünü import edip HostAddress set et (record API için)
-  var _gcPatched = false;
-  var gcInterval = setInterval(function () {
-    if (_gcPatched) return;
-    try {
-      if (typeof System !== "undefined" && System.import) {
-        System.import("chunks:///_virtual/GlobalContext.ts").then(function (mod) {
-          if (mod && mod.globalContext) {
-            var gc = mod.globalContext;
-            if (!gc.HostAddress) {
-              gc.HostAddress = "https://mock-api";
-              console.log("%c[BRIDGE] GlobalContext.HostAddress = https://mock-api", "color: lime;");
+  // HostAddress'i game yüklendikten sonra globalContext üzerine yaz
+  // System.register wrapper ile modül export'unu intercept et
+  var _origRegister = typeof System !== "undefined" && System.register;
+  if (_origRegister) {
+    System.register = function(name, deps, declare) {
+      if (typeof name === "string" && name.indexOf("GlobalContext.ts") !== -1) {
+        var origDeclare = declare;
+        declare = function(exportFn) {
+          var result = origDeclare(function(key, val) {
+            if (key === "globalContext" && val && typeof val === "object") {
+              val.HostAddress = "https://mock-api";
+              val.gameId = val.gameId || 22;
+              console.log("%c[BRIDGE] GlobalContext.HostAddress patched via register hook", "color: lime;");
             }
-            if (!gc.gameId) gc.gameId = 22;
-            _gcPatched = true;
-          }
-        }).catch(function () {});
+            return exportFn(key, val);
+          });
+          return result;
+        };
       }
-    } catch (e) {}
-  }, 500);
-  setTimeout(function () { clearInterval(gcInterval); }, 20000);
+      return _origRegister.call(System, name, deps, declare);
+    };
+  }
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
