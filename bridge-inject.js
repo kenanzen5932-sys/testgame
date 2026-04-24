@@ -581,7 +581,7 @@
       "&token=" + encodeURIComponent(AUTH_TOKEN || "flutter_token") +
       "&roomId=" + encodeURIComponent(ROOM_ID || "0") +
       "&betVersion=1" +
-      "&host=" + btoa("https://mock-api");
+      "&host=" + encodeURIComponent(btoa("https://mock-api"));
     var newUrl = window.location.pathname + "?" + injectParams + window.location.hash;
     window.history.replaceState(null, "", newUrl);
   }
@@ -684,7 +684,10 @@
     if (this._mockResponse) {
       setTimeout(function () {
         var mockStr = typeof self._mockResponse === "string" ? self._mockResponse : JSON.stringify(self._mockResponse);
-        self.status = 200; self.readyState = 4; self.response = mockStr; self.responseText = mockStr;
+        self.responseText = mockStr;
+        // responseType="json" ise parsed object, değilse string
+        self.response = (self.responseType === "json") ? self._mockResponse : mockStr;
+        self.status = 200; self.readyState = 4;
         if (self.onload) self.onload();
         if (self.onreadystatechange) self.onreadystatechange();
       }, 50);
