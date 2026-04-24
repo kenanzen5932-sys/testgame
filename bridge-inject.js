@@ -40,6 +40,15 @@
   var MASTER_HB_INTERVAL = 5000; // 5s
   var MASTER_TIMEOUT = 15000; // 15s
 
+  // Avatar URL'lerini proxy'ye çeviren yardımcı fonksiyon
+  function proxyAvatarUrl(url) {
+    if (!url) return "";
+    if (url.indexOf("cdn.apexparty.live") > -1) {
+      return url.replace("https://cdn.apexparty.live", window.location.origin + "/avatar-proxy");
+    }
+    return url;
+  }
+
   // FLUTTER_USER enjekte edilene kadar bekle
   function refreshUserFromFlutter() {
     var u = window.FLUTTER_USER;
@@ -48,12 +57,7 @@
       USER_ID = u.userId || "";
       ROOM_ID = u.roomId || "0";
       NICKNAME = u.nickname || "Oyuncu";
-      var rawAvatar = u.avatar || "";
-      if (rawAvatar.indexOf("cdn.apexparty.live") > -1) {
-        AVATAR = rawAvatar.replace("https://cdn.apexparty.live", window.location.origin + "/avatar-proxy");
-      } else {
-        AVATAR = rawAvatar;
-      }
+      AVATAR = proxyAvatarUrl(u.avatar || "");
       _authReady = true;
       console.log("%c[BRIDGE] FLUTTER_USER okundu: " + NICKNAME + " room=" + ROOM_ID + " avatar=" + AVATAR, "color: lime;");
       return true;
@@ -328,7 +332,7 @@
     if (!data.userId) return;
     _players[data.userId] = {
       nickname: data.nickname || "Oyuncu",
-      avatar: data.avatar || "",
+      avatar: proxyAvatarUrl(data.avatar || ""),
       joinedAt: data.joinedAt || Date.now()
     };
     console.log("%c[BRIDGE] Oyuncu katıldı: " + data.nickname + " (toplam: " + (Object.keys(_players).length + 1) + ")", "color: lime;");
@@ -348,7 +352,7 @@
     // Oyuncu bilgisini güncelle (player:join kaçırılmış olabilir)
     if (!_players[data.userId]) _players[data.userId] = {};
     if (data.nickname) _players[data.userId].nickname = data.nickname;
-    if (data.avatar) _players[data.userId].avatar = data.avatar;
+    if (data.avatar) _players[data.userId].avatar = proxyAvatarUrl(data.avatar);
     // Diğer oyuncunun bahsini kaydet
     if (!_allBets[data.userId]) _allBets[data.userId] = {};
     _allBets[data.userId][data.foodId] = (_allBets[data.userId][data.foodId] || 0) + data.amount;
@@ -434,6 +438,11 @@
     if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
     saveLotteryHistory();
 
+    // Avatar URL'lerini proxy'le (master ham CDN URL'leri gönderebilir)
+    for (var wi = 0; wi < topWinners.length; wi++) {
+      if (topWinners[wi].icon) topWinners[wi].icon = proxyAvatarUrl(topWinners[wi].icon);
+      if (topWinners[wi].avatar) topWinners[wi].avatar = proxyAvatarUrl(topWinners[wi].avatar);
+    }
     _currentWinners = topWinners;
     preloadWinnerAvatars();
     console.log("%c[BRIDGE] Settle(listener): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
