@@ -9,7 +9,8 @@
  */
 (function () {
   "use strict";
-  console.log("%c[BRIDGE] Greedy Niva bridge aktif!", "color: lime; font-weight: bold; font-size: 14px;");
+  var BRIDGE_VERSION = "v2.3";
+  console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
   // 1) CONFIG
@@ -364,6 +365,15 @@
     sendRTMToGame("greedy_baby_sync_area_state", {
       roundId: _currentRoundId,
       areaBetData: totalFoodBets
+    });
+    // Bireysel bet bilgisini de oyuna gönder — oyun avatar gösterebilsin
+    sendRTMToGame("greedy_baby_other_bet", {
+      userId: data.userId,
+      nickname: data.nickname || "Oyuncu",
+      avatar: proxyAvatarUrl(data.avatar || ""),
+      foodId: data.foodId,
+      amount: data.amount,
+      roundId: _currentRoundId
     });
   }
 
@@ -971,63 +981,91 @@
   // 8) OYUN INIT — İlk bağlantı
   // ============================================================
   function handleGameInit() {
-    if (_gameInitDone) { console.log("%c[BRIDGE] handleGameInit zaten çalıştı, skip", "color: gray;"); return; }
-    _gameInitDone = true;
-    console.log("%c[BRIDGE] handleGameInit BAŞLATILIYOR — gameId=" + _gameId, "color: lime; font-weight: bold; font-size: 12px;");
-    getAuthFromFlutter().then(function () {
-      // Bakiye al
-      callGameEngine("get_state").then(function (result) {
-        if (result && result.success) {
-          _userCoins = result.coins || 0;
-        }
-        // Init mesajını HEMEN gönder — oyun bekleyemez
-        var syncInfo = getSyncRoundInfo();
-        sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
-        _currentRoundId = syncInfo.roundId;
-        _currentState = syncInfo.state;
-        // Sync loop'u HEMEN başlat — PieSocket master olunca üstüne yazılacak
-        console.log("%c[BRIDGE] Sync loop hemen başlatılıyor (PieSocket beklenmeden)", "color: yellow;");
-        startLocalGameLoop();
-      });
+    try {
+      if (_gameInitDone) { console.log("%c[BRIDGE] handleGameInit zaten çalıştı, skip", "color: gray;"); return; }
+      _gameInitDone = true;
+      console.log("%c[BRIDGE] ████ handleGameInit BAŞLATILIYOR ████ gameId=" + _gameId + " authToken=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) + "..." : "YOK") + " userId=" + USER_ID.substring(0, 8), "color: lime; font-weight: bold; font-size: 14px;");
+      getAuthFromFlutter().then(function () {
+        console.log("%c[BRIDGE] Auth alındı → get_state çağrılıyor...", "color: #4CAF50;");
+        // Bakiye al
+        callGameEngine("get_state").then(function (result) {
+          console.log("%c[BRIDGE] get_state sonucu:", "color: #4CAF50;", result);
+          if (result && result.success) {
+            _userCoins = result.coins || 0;
+          }
+          // Init mesajını HEMEN gönder — oyun bekleyemez
+          var syncInfo = getSyncRoundInfo();
+          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
+          _currentRoundId = syncInfo.roundId;
+          _currentState = syncInfo.state;
+          // Sync loop'u HEMEN başlat — PieSocket beklenmeden
+          console.log("%c[BRIDGE] Sync loop hemen başlatılıyor (PieSocket beklenmeden)", "color: yellow;");
+          startLocalGameLoop();
+        }).catch(function(err) {
+          console.error("[BRIDGE] get_state HATA:", err);
+          // Hata olsa bile sync loop başlat
+          var syncInfo = getSyncRoundInfo();
+          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
+          startLocalGameLoop();
+        });
 
-      // PieSocket bağlan — master election otomatik olur
-      connectPieSocket();
-      startMasterCheck();
-    });
+        // PieSocket bağlan — master election otomatik olur
+        console.log("%c[BRIDGE] PieSocket bağlantısı başlatılıyor...", "color: #2196F3;");
+        connectPieSocket();
+        startMasterCheck();
+      }).catch(function(authErr) {
+        console.error("[BRIDGE] getAuthFromFlutter HATA:", authErr);
+        // Auth başarısız olsa bile devam et
+        var syncInfo = getSyncRoundInfo();
+        sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
+        startLocalGameLoop();
+        connectPieSocket();
+        startMasterCheck();
+      });
+    } catch(fatalErr) {
+      console.error("[BRIDGE] handleGameInit FATAL HATA:", fatalErr, fatalErr.stack || "");
+    }
   }
 
   // ============================================================
-  // 8b) AUTO-INIT: Oyun RTMResponseMsg set edince veya 4s timer ile otomatik init
+  // 8b) AUTO-INIT: Tekrarlayan interval ile otomatik init (tek seferlik timeout güvenilmez)
   // ============================================================
   (function setupAutoInit() {
     // Yöntem 1: window.RTMResponseMsg interceptor
-    // Oyunun RTMManager.initRTM() bunu set eder → oyun RTM mesajı almaya hazır
     var _realRTMResponseMsg = null;
+    var _rtmReady = false;
     Object.defineProperty(window, "RTMResponseMsg", {
       set: function (fn) {
         _realRTMResponseMsg = fn;
+        _rtmReady = true;
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
-        // Oyun hazır, biraz bekle sonra init'i tetikle
-        // Oyun sahnesi yüklenmesi için 4s bekle (RTMManager modül yüklemesinde set eder,
-        // ama oyun UI'ı LoadScene + openBundleUI + scheduleOnce(2s) sonra hazır)
-        setTimeout(function () {
-          if (!_gameInitDone) {
-            console.log("%c[BRIDGE] RTMResponseMsg tespit (4s sonra) → handleGameInit tetikleniyor", "color: lime;");
-            handleGameInit();
-          }
-        }, 4000);
       },
       get: function () { return _realRTMResponseMsg; },
       configurable: true
     });
 
-    // Yöntem 2: Güvenlik zamanlayıcısı — 8 saniye içinde init olmadıysa zorla başlat
-    setTimeout(function () {
-      if (!_gameInitDone) {
-        console.log("%c[BRIDGE] 8s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+    // Yöntem 2: Tekrarlayan interval — her 2s kontrol, RTM hazır olduktan 4s sonra init
+    var _rtmReadyAt = 0;
+    var _initCheckInterval = setInterval(function () {
+      if (_gameInitDone) {
+        clearInterval(_initCheckInterval);
+        console.log("%c[BRIDGE] AUTO-INIT interval durduruldu (init tamamlandı)", "color: gray;");
+        return;
+      }
+      var now = Date.now();
+      // RTM hazır olduysa zamanı kaydet
+      if (_rtmReady && !_rtmReadyAt) {
+        _rtmReadyAt = now;
+        console.log("%c[BRIDGE] RTM hazır zamanı kaydedildi, 4s sonra init denenecek", "color: yellow;");
+      }
+      // RTM hazır + 4s geçtiyse VEYA toplam 8s geçtiyse → init
+      if ((_rtmReadyAt && now - _rtmReadyAt >= 4000) || now - _autoInitStartTime >= 8000) {
+        console.log("%c[BRIDGE] AUTO-INIT tetikleniyor: rtmReady=" + _rtmReady + " elapsed=" + (now - _autoInitStartTime) + "ms", "color: orange; font-weight: bold;");
+        clearInterval(_initCheckInterval);
         handleGameInit();
       }
-    }, 8000);
+    }, 1500);
+    var _autoInitStartTime = Date.now();
   })();
 
   // Master olarak oyun döngüsünü başlat
