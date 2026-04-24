@@ -66,7 +66,8 @@
   }
 
   // Oyun durumu
-  var _gameId = "";
+  var _gameId = 22; // Cocos oyunun hardcoded gameId'si — globalContext.gameId = 22
+  var _gameInitDone = false; // handleGameInit bir kez çalışsın
   var _currentRoundId = null;
   var _currentState = 0;
   var _userCoins = 0;
@@ -510,7 +511,14 @@
   // 6) COCOS'A RTM MESAJI GÖNDER
   // ============================================================
   function sendRTMToGame(event, params) {
-    if (!_gameId) return;
+    if (!_gameId) {
+      console.warn("[BRIDGE] sendRTMToGame BLOCKED — _gameId boş! event=" + event);
+      return;
+    }
+    if (typeof window.RTMResponseMsg !== "function") {
+      console.warn("[BRIDGE] sendRTMToGame BLOCKED — RTMResponseMsg yok! event=" + event);
+      return;
+    }
     var payload = JSON.stringify({
       gameId: _gameId,
       events: [{ event: event, params: params }],
@@ -937,8 +945,8 @@
       console.log("%c[GAME→] " + action, "color: #2196F3;", msg);
 
       if (action === "GreedyBaby:init") {
-        _gameId = msg.gameId || "";
-        handleGameInit();
+        if (msg.gameId) _gameId = msg.gameId; // oyundan gelen gameId ile güncelle
+        handleGameInit(); // guard içinde zaten çalışmışsa skip eder
       } else if (action === "GreedyBaby:join") {
         // join — state loop zaten PieSocket'ten geliyor
       } else if (action === "GreedyBaby:bet") {
@@ -955,6 +963,9 @@
   // 8) OYUN INIT — İlk bağlantı
   // ============================================================
   function handleGameInit() {
+    if (_gameInitDone) { console.log("%c[BRIDGE] handleGameInit zaten çalıştı, skip", "color: gray;"); return; }
+    _gameInitDone = true;
+    console.log("%c[BRIDGE] handleGameInit BAŞLATILIYOR — gameId=" + _gameId, "color: lime; font-weight: bold; font-size: 12px;");
     getAuthFromFlutter().then(function () {
       // Bakiye al
       callGameEngine("get_state").then(function (result) {
@@ -976,6 +987,38 @@
       startMasterCheck();
     });
   }
+
+  // ============================================================
+  // 8b) AUTO-INIT: Oyun RTMResponseMsg set edince veya 4s timer ile otomatik init
+  // ============================================================
+  (function setupAutoInit() {
+    // Yöntem 1: window.RTMResponseMsg interceptor
+    // Oyunun RTMManager.initRTM() bunu set eder → oyun RTM mesajı almaya hazır
+    var _realRTMResponseMsg = null;
+    Object.defineProperty(window, "RTMResponseMsg", {
+      set: function (fn) {
+        _realRTMResponseMsg = fn;
+        console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
+        // Oyun hazır, biraz bekle sonra init'i tetikle
+        setTimeout(function () {
+          if (!_gameInitDone) {
+            console.log("%c[BRIDGE] RTMResponseMsg tespit → handleGameInit tetikleniyor", "color: lime;");
+            handleGameInit();
+          }
+        }, 300);
+      },
+      get: function () { return _realRTMResponseMsg; },
+      configurable: true
+    });
+
+    // Yöntem 2: Güvenlik zamanlayıcısı — 5 saniye içinde init olmadıysa zorla başlat
+    setTimeout(function () {
+      if (!_gameInitDone) {
+        console.log("%c[BRIDGE] 5s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+        handleGameInit();
+      }
+    }, 5000);
+  })();
 
   // Master olarak oyun döngüsünü başlat
   function startMasterGameLoop() {
