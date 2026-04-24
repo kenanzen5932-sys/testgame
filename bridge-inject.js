@@ -68,6 +68,7 @@
   // Oyun durumu
   var _gameId = 22; // Cocos oyunun hardcoded gameId'si — globalContext.gameId = 22
   var _gameInitDone = false; // handleGameInit bir kez çalışsın
+  var _lastInitParams = null; // Son init verisini sakla — oyun retry'da tekrar gönderilir
   var _currentRoundId = null;
   var _currentState = 0;
   var _userCoins = 0;
@@ -945,8 +946,15 @@
       console.log("%c[GAME→] " + action, "color: #2196F3;", msg);
 
       if (action === "GreedyBaby:init") {
-        if (msg.gameId) _gameId = msg.gameId; // oyundan gelen gameId ile güncelle
-        handleGameInit(); // guard içinde zaten çalışmışsa skip eder
+        if (msg.gameId) _gameId = msg.gameId;
+        console.log("%c[BRIDGE] Oyun GreedyBaby:init gönderdi! _gameInitDone=" + _gameInitDone, "color: #00ff00; font-weight: bold;");
+        if (!_gameInitDone) {
+          handleGameInit();
+        } else if (_lastInitParams) {
+          // Oyun init retry yapıyor — son init verisini tekrar gönder
+          console.log("%c[BRIDGE] Init verisi tekrar gönderiliyor (oyun retry)", "color: lime;");
+          sendRTMToGame("greedy_baby_init", _lastInitParams);
+        }
       } else if (action === "GreedyBaby:join") {
         // join — state loop zaten PieSocket'ten geliyor
       } else if (action === "GreedyBaby:bet") {
@@ -1000,24 +1008,26 @@
         _realRTMResponseMsg = fn;
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
         // Oyun hazır, biraz bekle sonra init'i tetikle
+        // Oyun sahnesi yüklenmesi için 4s bekle (RTMManager modül yüklemesinde set eder,
+        // ama oyun UI'ı LoadScene + openBundleUI + scheduleOnce(2s) sonra hazır)
         setTimeout(function () {
           if (!_gameInitDone) {
-            console.log("%c[BRIDGE] RTMResponseMsg tespit → handleGameInit tetikleniyor", "color: lime;");
+            console.log("%c[BRIDGE] RTMResponseMsg tespit (4s sonra) → handleGameInit tetikleniyor", "color: lime;");
             handleGameInit();
           }
-        }, 300);
+        }, 4000);
       },
       get: function () { return _realRTMResponseMsg; },
       configurable: true
     });
 
-    // Yöntem 2: Güvenlik zamanlayıcısı — 5 saniye içinde init olmadıysa zorla başlat
+    // Yöntem 2: Güvenlik zamanlayıcısı — 8 saniye içinde init olmadıysa zorla başlat
     setTimeout(function () {
       if (!_gameInitDone) {
-        console.log("%c[BRIDGE] 5s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+        console.log("%c[BRIDGE] 8s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
         handleGameInit();
       }
-    }, 5000);
+    }, 8000);
   })();
 
   // Master olarak oyun döngüsünü başlat
@@ -1069,7 +1079,7 @@
     var history = (stateResult && stateResult.lotteryResult && stateResult.lotteryResult.length > 0)
       ? stateResult.lotteryResult : (_lotteryHistory.length > 0 ? _lotteryHistory : []);
 
-    sendRTMToGame("greedy_baby_init", {
+    _lastInitParams = {
       roundId: round ? round.id : 1000,
       state: state,
       countDown: countDown,
@@ -1083,7 +1093,9 @@
       todayWin: _todayWin,
       winFoodId: -1,
       serverTime: Date.now(),
-    });
+    };
+    console.log("%c[BRIDGE] sendInitToGame → greedy_baby_init", "color: #4CAF50; font-weight: bold;", _lastInitParams);
+    sendRTMToGame("greedy_baby_init", _lastInitParams);
   }
 
   // lotteryHistory: localStorage'dan yükle (sayfa yeniden açıldığında korunsun)
