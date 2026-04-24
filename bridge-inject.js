@@ -784,6 +784,7 @@
       state: state,
       countDown: countDown,
       diamond: _userCoins,
+      betingId: 0,
       bets: [100, 1000, 5000, 10000, 50000],
       betData: [],
       rank: 0,
@@ -1058,8 +1059,13 @@
       }
 
       var localTopWinners = [];
+      // Kullanıcı kazandıysa winner listesinde göster
       if (userWinType === 2 && userAward > 0) {
         localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", avatar: AVATAR || "", award: userAward });
+      }
+      // Kullanıcı kazanmasa bile avatarlı bir giriş ekle (oyun her zaman avatar görsün)
+      if (localTopWinners.length === 0 && AVATAR) {
+        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR, avatar: AVATAR, award: 0 });
       }
       console.log("%c[BRIDGE] Settle: winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
