@@ -471,19 +471,38 @@
     return null;
   }
 
+  // Sessiz MP3 (tiny valid mp3 — base64)
+  var SILENT_MP3_B64 = "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwBHAAAAAAD/+1DEAAAB8AHoAAAAACWAPQAAAAQAAAGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8=";
+  var _silentAudioBlob = null;
+  function getSilentAudioBlob() {
+    if (!_silentAudioBlob) {
+      var byteStr = atob(SILENT_MP3_B64);
+      var ab = new ArrayBuffer(byteStr.length);
+      var ia = new Uint8Array(ab);
+      for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+      _silentAudioBlob = new Blob([ab], { type: "audio/mpeg" });
+    }
+    return _silentAudioBlob;
+  }
+
+  function isAudioUrl(url) {
+    return url && (url.indexOf("/sound/") !== -1 || /\.(mp3|ogg|wav|m4a)$/i.test(url));
+  }
+
   // XHR interceptor
   var OriginalXHR = window.XMLHttpRequest;
   function BridgeXHR() {
     var realXHR = new OriginalXHR();
     var self = this;
-    this._url = ""; this._mockResponse = null; this._realXHR = realXHR;
+    this._url = ""; this._mockResponse = null; this._isAudio = false; this._realXHR = realXHR;
     this.responseType = ""; this.timeout = 0; this.status = 0; this.response = null; this.readyState = 0;
     this.onload = null; this.onerror = null; this.ontimeout = null; this.onreadystatechange = null; this.onprogress = null;
   }
   BridgeXHR.prototype.open = function (method, url, async) {
     this._url = url;
+    this._isAudio = isAudioUrl(url);
     this._mockResponse = findMockApiResponse(url);
-    if (!this._mockResponse) this._realXHR.open(method, url, async !== false);
+    if (!this._mockResponse && !this._isAudio) this._realXHR.open(method, url, async !== false);
   };
   BridgeXHR.prototype.setRequestHeader = function (k, v) { if (!this._mockResponse) try { this._realXHR.setRequestHeader(k, v); } catch(e){} };
   BridgeXHR.prototype.addEventListener = function (t, fn) { if (!this._mockResponse) this._realXHR.addEventListener(t, fn); };
@@ -496,6 +515,30 @@
         if (self.onload) self.onload();
         if (self.onreadystatechange) self.onreadystatechange();
       }, 50);
+    } else if (this._isAudio) {
+      // Ses dosyası → sessiz mp3 döndür (404 döngüsünü engelle)
+      setTimeout(function () {
+        self.status = 200; self.readyState = 4;
+        self.response = (self.responseType === "arraybuffer") ? getSilentAudioBlob().arrayBuffer ? null : getSilentAudioBlob() : getSilentAudioBlob();
+        try {
+          if (self.responseType === "arraybuffer") {
+            var reader = new FileReader();
+            reader.onload = function () {
+              self.response = reader.result;
+              if (self.onload) self.onload();
+              if (self.onreadystatechange) self.onreadystatechange();
+            };
+            reader.readAsArrayBuffer(getSilentAudioBlob());
+          } else {
+            self.response = getSilentAudioBlob();
+            if (self.onload) self.onload();
+            if (self.onreadystatechange) self.onreadystatechange();
+          }
+        } catch(e) {
+          self.response = getSilentAudioBlob();
+          if (self.onload) self.onload();
+        }
+      }, 10);
     } else {
       var xr = this._realXHR;
       xr.responseType = this.responseType; xr.timeout = this.timeout;
@@ -511,9 +554,13 @@
   // Fetch interceptor
   var originalFetch = window.fetch;
   window.fetch = function (url, options) {
-    var mockResp = findMockApiResponse(typeof url === "string" ? url : url.url || "");
+    var urlStr = typeof url === "string" ? url : url.url || "";
+    var mockResp = findMockApiResponse(urlStr);
     if (mockResp) {
       return Promise.resolve(new Response(JSON.stringify(mockResp), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (isAudioUrl(urlStr)) {
+      return Promise.resolve(new Response(getSilentAudioBlob(), { status: 200, headers: { "Content-Type": "audio/mpeg" } }));
     }
     return originalFetch.apply(window, arguments);
   };
@@ -810,6 +857,7 @@
   // ============================================================
   // 9) KULLANICI BAHİS
   // ============================================================
+  var _betIdCounter = 1000;
   function handleUserBet(msg) {
     var betParams = msg.params || {};
     var betDataArr = betParams.betData || [];
@@ -818,32 +866,38 @@
     var betFoodId = betDataArr[0].foodId || 0;
     var betAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || 100;
 
-    // Edge Function'a bahis gönder
+    // Önce local olarak düş (instant feedback)
+    _userCoins -= betAmount;
+    _userBets[betFoodId] = (_userBets[betFoodId] || 0) + betAmount;
+    _betIdCounter++;
+    var localBetId = _betIdCounter;
+
+    console.log("%c[BRIDGE] Bahis: food=" + betFoodId + " amount=" + betAmount + " coins=" + _userCoins, "color: cyan;");
+
+    // Oyuna hemen onay gönder
+    sendRTMToGame("greedy_baby_bet", {
+      code: 0,
+      roundId: _currentRoundId,
+      diamond: _userCoins,
+      betingId: localBetId,
+      betData: betDataArr,
+    });
+
+    // Edge Function'a da gönder (arka planda)
     callGameEngine("place_bet", {
       round_id: _currentRoundId,
       food_id: betFoodId,
       amount: betAmount,
     }).then(function (result) {
       if (result && result.success) {
+        // Gerçek bakiyeyle senkronize et
         _userCoins = result.remaining_coins;
-        _userBets[betFoodId] = (_userBets[betFoodId] || 0) + betAmount;
-
-        // Oyuna onay gönder
-        sendRTMToGame("greedy_baby_bet", {
-          code: 0,
-          roundId: _currentRoundId,
-          diamond: _userCoins,
-          betingId: result.bet_id,
-          betData: betDataArr,
-        });
+        sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
       } else {
-        // Hata — bahis reddedildi
-        console.warn("[BRIDGE] Bahis reddedildi:", result);
-        sendRTMToGame("greedy_baby_bet", {
-          code: 1,
-          msg: (result && result.error) || "Bahis yapılamadı",
-        });
+        console.warn("[BRIDGE] Bahis backend'de reddedildi:", result);
       }
+    }).catch(function(e) {
+      console.warn("[BRIDGE] place_bet hatası (local devam ediyor):", e);
     });
   }
 
