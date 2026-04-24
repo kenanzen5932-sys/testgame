@@ -63,6 +63,24 @@
   try { var _sw = localStorage.getItem(_todayWinKey); if (_sw) _todayWin = parseInt(_sw) || 0; } catch(e) {}
   function saveTodayWin() { try { localStorage.setItem(_todayWinKey, _todayWin.toString()); } catch(e) {} }
 
+  // Geçmiş kayıtlar (bet records) — localStorage'da sakla
+  var _betRecords = [];
+  try { var _savedBR = localStorage.getItem("betRecords"); if (_savedBR) _betRecords = JSON.parse(_savedBR); } catch(e) {}
+  function saveBetRecords() { try { _betRecords = _betRecords.slice(-100); localStorage.setItem("betRecords", JSON.stringify(_betRecords)); } catch(e) {} }
+  function addBetRecord(roundId, foodId, userBets, userAward, userCoins) {
+    var betMap = {};
+    for (var fid in userBets) { if (userBets.hasOwnProperty(fid) && userBets[fid] > 0) betMap[fid] = userBets[fid]; }
+    _betRecords.push({
+      roundId: roundId,
+      settleTime: Math.floor(Date.now() / 1000),
+      foodId: foodId,
+      win: userAward,
+      assetNum: userCoins,
+      betMap: betMap
+    });
+    saveBetRecords();
+  }
+
   // Çarpan tablosu
   var MULTIPLIERS = [5, 45, 5, 25, 5, 15, 10, 5];
 
@@ -562,7 +580,8 @@
     var injectParams = "uid=" + encodeURIComponent(USER_ID || "flutter_user") +
       "&token=" + encodeURIComponent(AUTH_TOKEN || "flutter_token") +
       "&roomId=" + encodeURIComponent(ROOM_ID || "0") +
-      "&betVersion=1";
+      "&betVersion=1" +
+      "&host=" + btoa("https://mock-api");
     var newUrl = window.location.pathname + "?" + injectParams + window.location.hash;
     window.history.replaceState(null, "", newUrl);
   }
@@ -584,14 +603,20 @@
     "/activity/probability-game/banner": { code: 200, message: "success", data: { banners: [] } },
     "/game/greedy-baby/gm": { code: 200, message: "success", data: {} },
     "/game/greedy-baby-rank/rank-v1": { code: 200, message: "success", data: { userType: 1, myRank: 0, myBet: 0, rankList: [] } },
-    "/game/greedy-baby-rank/bet-recored": { code: 200, message: "success", data: { total: 0, list: [] } },
+    "/game/greedy-baby-rank/bet-recored": function() {
+      var recs = _betRecords.slice().reverse();
+      return { code: 200, message: "success", data: { page: 0, more: false, records: recs } };
+    },
     "/game/operation/operation-search": { code: 200, message: "success", data: {} },
     "/v2/client-event/report": { code: 200, message: "ok" }
   };
 
   function findMockApiResponse(url) {
     for (var pattern in MOCK_API_RESPONSES) {
-      if (url.indexOf(pattern) !== -1) return MOCK_API_RESPONSES[pattern];
+      if (url.indexOf(pattern) !== -1) {
+        var val = MOCK_API_RESPONSES[pattern];
+        return typeof val === "function" ? val() : val;
+      }
     }
     return null;
   }
@@ -658,7 +683,8 @@
     var self = this;
     if (this._mockResponse) {
       setTimeout(function () {
-        self.status = 200; self.readyState = 4; self.response = self._mockResponse;
+        var mockStr = typeof self._mockResponse === "string" ? self._mockResponse : JSON.stringify(self._mockResponse);
+        self.status = 200; self.readyState = 4; self.response = mockStr; self.responseText = mockStr;
         if (self.onload) self.onload();
         if (self.onreadystatechange) self.onreadystatechange();
       }, 50);
@@ -869,6 +895,8 @@
 
             // Bugünkü kazancı güncelle
             if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
+            // Geçmiş kaydı ekle
+            addBetRecord(roundId, winFoodId, _userBets, userAward, _userCoins);
 
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
@@ -1070,6 +1098,8 @@
 
       // Bugünkü kazancı güncelle
       if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
+      // Geçmiş kaydı ekle
+      addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins);
 
       var localTopWinners = [];
       // Kullanıcı kazandıysa winner listesinde göster
@@ -1458,9 +1488,13 @@
               }
               chipSprite.color = _chipBgPinkColor;
             }
-            // chip_gray katmanını gizle
+            // chip_gray katmanını kalıcı olarak görünmez yap (sprite'yi devre dışı bırak)
             var chipGray = nd2.getChildByName && nd2.getChildByName("chip_gray");
-            if (chipGray && chipGray.active) chipGray.active = false;
+            if (chipGray && !chipGray._bridgeHidden) {
+              var graySpr = chipGray.getComponent(cc.Sprite);
+              if (graySpr) graySpr.enabled = false;
+              chipGray._bridgeHidden = true;
+            }
             // layout içindeki ekstra yazıyı gizle (sadece you_chip_label ve ikon kalsın)
             var layoutNode = nd2.getChildByName && nd2.getChildByName("layout");
             if (layoutNode && layoutNode.children) {
