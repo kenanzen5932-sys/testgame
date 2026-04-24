@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    {
+      "source": "/game/fe-game-cocos-js-hm/:path*",
+      "destination": "/cocos-js/:path*"
+    },
+    {
+      "source": "/game/:path*",
+      "destination": "/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    }
+  ]
+}
