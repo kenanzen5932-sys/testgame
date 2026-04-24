@@ -1181,7 +1181,7 @@
     // Master'ın kendi bahisleri
     if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
       var myAward = _userBets[winFoodId] * multiple;
-      var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+      var avatarCB = AVATAR || "";
       winners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: myAward });
     }
     // Diğer oyuncuların bahisleri
@@ -1190,7 +1190,7 @@
         var pAward = _allBets[uid][winFoodId] * multiple;
         var pInfo = _players[uid] || {};
         var pAvatar = pInfo.avatar || "";
-        if (pAvatar) pAvatar = pAvatar + (pAvatar.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
+        // pAvatar zaten doğrudan kullanılır, cache-bust ekleme (cache key uyuşmazlığına neden olur)
         winners.push({
           name: pInfo.nickname || "Oyuncu",
           icon: pAvatar, avatar: pAvatar,
@@ -1234,14 +1234,19 @@
 
   function _buildAvatarSF(url, imgAsset) {
     try {
-      var tex = new cc.Texture2D();
-      tex.image = imgAsset;
+      var tex;
+      if (imgAsset instanceof cc.Texture2D) {
+        tex = imgAsset;
+      } else {
+        tex = new cc.Texture2D();
+        tex.image = imgAsset;
+      }
       var sf = new cc.SpriteFrame();
       sf.texture = tex;
       sf.packable = false;
       sf.addRef();
       _avatarSFCache[url] = sf;
-      console.log("%c[BRIDGE] Avatar cached OK: " + url.substring(0, 60), "color: #4CAF50;");
+      console.log("%c[BRIDGE] Avatar cached OK: " + url.substring(0, 60) + " type=" + (imgAsset.constructor ? imgAsset.constructor.name : typeof imgAsset), "color: #4CAF50;");
     } catch(e) {
       console.error("[BRIDGE] Avatar SpriteFrame oluşturma hatası:", e);
     }
@@ -1365,61 +1370,66 @@
       });
     } else if (info.state === 3 && stateChanged) {
       // Sonuç — sadece state değiştiğinde bir kere çalışır
-      var winFoodId = info.winFoodId;
-      _lotteryHistory.unshift(winFoodId);
-      if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
-      saveLotteryHistory();
+      try {
+        console.log("%c[BRIDGE] syncTick state=3 başladı, winFood=" + info.winFoodId, "color: gold;");
+        var winFoodId = info.winFoodId;
+        _lotteryHistory.unshift(winFoodId);
+        if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+        try { saveLotteryHistory(); } catch(eHist) { console.error("[BRIDGE] saveLotteryHistory hata:", eHist); }
 
-      var multiple = MULTIPLIERS[winFoodId];
-      var userWinType = 0;
-      var userAward = 0;
-      if (Object.keys(_userBets).length > 0) {
-        if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
-          userWinType = 2;
-          userAward = _userBets[winFoodId] * multiple;
-          _userCoins += userAward;
-        } else {
-          userWinType = 1;
+        var multiple = MULTIPLIERS[winFoodId];
+        var userWinType = 0;
+        var userAward = 0;
+        if (Object.keys(_userBets).length > 0) {
+          if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+            userWinType = 2;
+            userAward = _userBets[winFoodId] * multiple;
+            _userCoins += userAward;
+          } else {
+            userWinType = 1;
+          }
         }
-      }
 
-      // Bugünkü kazancı güncelle
-      if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
-      // Geçmiş kaydı ekle
-      addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins);
+        // Bugünkü kazancı güncelle
+        if (userAward > 0) { _todayWin += userAward; try { saveTodayWin(); } catch(eTW) {} }
+        // Geçmiş kaydı ekle
+        try { addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins); } catch(eBR) { console.error("[BRIDGE] addBetRecord hata:", eBR); }
 
-      // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
-      var localTopWinners = buildAllWinners(winFoodId, multiple);
-      _currentWinners = localTopWinners;
-      preloadWinnerAvatars();
-      console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
-      // Oyun UI'daki coin göstergesini güncelle
-      sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
-      notifyFlutterCoins(_userCoins);
+        // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
+        var localTopWinners = buildAllWinners(winFoodId, multiple);
+        _currentWinners = localTopWinners;
+        preloadWinnerAvatars();
+        console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + (AVATAR ? AVATAR.substring(0, 60) : "NONE") + " winners=" + localTopWinners.length, "color: gold;");
+        // Oyun UI'daki coin göstergesini güncelle
+        sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
+        notifyFlutterCoins(_userCoins);
 
-      sendRTMToGame("greedy_baby_state", {
-        roundId: info.roundId,
-        state: 3,
-        countDown: info.countDown,
-        resultData: {
-          foodId: winFoodId,
-          multiple: multiple,
-          award: userAward,
-          winType: userWinType,
-          resultShowTime: SYNC_RESULT_TIME,
+        sendRTMToGame("greedy_baby_state", {
+          roundId: info.roundId,
+          state: 3,
+          countDown: info.countDown,
+          resultData: {
+            foodId: winFoodId,
+            multiple: multiple,
+            award: userAward,
+            winType: userWinType,
+            resultShowTime: SYNC_RESULT_TIME,
+            todayWin: _todayWin,
+            winUser: localTopWinners,
+          },
+          lotteryResult: _lotteryHistory.slice(0, 20),
+          delayShowResultTime: 0,
           todayWin: _todayWin,
-          winUser: localTopWinners,
-        },
-        lotteryResult: _lotteryHistory.slice(0, 20),
-        delayShowResultTime: 0,
-        todayWin: _todayWin,
-        diamond: _userCoins,
-        serverTime: Date.now(),
-      });
+          diamond: _userCoins,
+          serverTime: Date.now(),
+        });
 
-      setTimeout(function () {
-        sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
-      }, 500);
+        setTimeout(function () {
+          sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+        }, 500);
+      } catch (eSyncSettle) {
+        console.error("[BRIDGE] syncTick state=3 HATA:", eSyncSettle, eSyncSettle.stack || "");
+      }
     }
   }
 
@@ -1805,8 +1815,8 @@
           }
         }
       }
-      // Avatar force-patch: Cocos'un kendi SpriteAdapter'ını kullanarak avatar yükle
-      if (_currentWinners.length > 0) {
+      // Avatar force-patch: Sprite boşsa cache'ten veya doğrudan yükle
+      if (_currentWinners.length > 0 && typeof cc !== "undefined" && cc.Sprite) {
         for (var hi = 0; hi < allNodes.length; hi++) {
           var hn = allNodes[hi];
           var winIdx = -1;
@@ -1818,41 +1828,40 @@
             if (!winAvatar) continue;
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (!headNode) continue;
-            // Oyunun kendi SpriteAdapter bileşenini bul ve loadImageByHttps çağır
             try {
-              var sa = null;
-              var _comps = headNode._components || [];
-              for (var ci = 0; ci < _comps.length; ci++) {
-                if (_comps[ci] && typeof _comps[ci].loadImageByHttps === "function") { sa = _comps[ci]; break; }
-              }
-              if (sa) {
-                // Sadece URL farklıysa yükle (duplicate engelle)
-                if (sa._url !== winAvatar) {
-                  sa.loadImageByHttps(winAvatar);
-                  console.log("%c[BRIDGE] Avatar SpriteAdapter load: winner_" + winIdx + " url=" + winAvatar.substring(0, 60), "color: #E91E63;");
-                }
-              } else {
-                // SpriteAdapter yoksa fallback: direkt assetManager ile yükle
-                var hSprite = headNode.getComponent(cc.Sprite);
-                if (hSprite && cc.assetManager && headNode._bridgeAvatarUrl !== winAvatar) {
-                  headNode._bridgeAvatarUrl = winAvatar;
-                  (function(sprite, hNode, avatarSrc) {
+              var hSprite = headNode.getComponent(cc.Sprite);
+              if (!hSprite) continue;
+              // Sprite'da geçerli bir spriteFrame var mı kontrol et
+              var hasSF = hSprite.spriteFrame && hSprite.spriteFrame.texture && hSprite.spriteFrame.texture.width > 2;
+              if (!hasSF) {
+                // Cache'te var mı?
+                var cachedSF = _avatarSFCache[winAvatar];
+                if (cachedSF) {
+                  hSprite.spriteFrame = cachedSF;
+                  console.log("%c[BRIDGE] Avatar cache'ten atandı: winner_" + winIdx, "color: #4CAF50;");
+                } else if (!headNode._bridgeAvatarLoading) {
+                  // Cache'te yok, async yükle
+                  headNode._bridgeAvatarLoading = true;
+                  console.log("%c[BRIDGE] Avatar yükleniyor: winner_" + winIdx + " url=" + winAvatar.substring(0, 60), "color: #E91E63;");
+                  (function(sprite, hNode, avatarSrc, wIdx) {
                     cc.assetManager.loadRemote(avatarSrc, { ext: ".png" }, function(err, imgAsset) {
+                      hNode._bridgeAvatarLoading = false;
                       if (!err && imgAsset && sprite.isValid) {
                         try {
-                          var sf = new cc.SpriteFrame();
-                          sf.texture = (imgAsset instanceof cc.Texture2D) ? imgAsset : (function() { var t = new cc.Texture2D(); t.image = imgAsset; return t; })();
-                          sf.packable = false;
-                          sprite.spriteFrame = sf;
-                        } catch(e2) { hNode._bridgeAvatarUrl = ""; }
+                          _buildAvatarSF(avatarSrc, imgAsset);
+                          if (_avatarSFCache[avatarSrc]) {
+                            sprite.spriteFrame = _avatarSFCache[avatarSrc];
+                            console.log("%c[BRIDGE] Avatar yüklendi OK: winner_" + wIdx, "color: #4CAF50;");
+                          }
+                        } catch(e2) { console.error("[BRIDGE] Avatar SF hata:", e2); }
                       } else {
-                        hNode._bridgeAvatarUrl = "";
+                        console.error("[BRIDGE] Avatar loadRemote FAIL: winner_" + wIdx, err);
                       }
                     });
-                  })(hSprite, headNode, winAvatar);
+                  })(hSprite, headNode, winAvatar, winIdx);
                 }
               }
-            } catch(eAvatar) {}
+            } catch(eAvatar) { console.error("[BRIDGE] Avatar patch hata:", eAvatar); }
           }
         }
       }
