@@ -635,9 +635,10 @@
       // Bakiye ve durum al
       callGameEngine("get_state").then(function (result) {
         if (!result || !result.success) {
-          console.error("[BRIDGE] get_state başarısız:", result);
-          // Offline mod — mock init gönder
-          sendInitToGame(null, result);
+          console.error("[BRIDGE] get_state başarısız, senkron mod:", result);
+          // Senkron mod — zaman tabanlı round bilgisi ile init gönder
+          var syncInfo = getSyncRoundInfo();
+          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
           startLocalGameLoop();
           return;
         }
@@ -666,9 +667,10 @@
               // Bahis süresi sonunda otomatik lottery → settle → next
               scheduleRoundProgression(startRes.round_id, startRes.bet_duration || 15);
             } else {
-              // Start da başarısız — local game loop
-              console.warn("[BRIDGE] start_game başarısız, local loop:", startRes);
-              sendInitToGame(null, result);
+              // Start da başarısız — senkron loop
+              console.warn("[BRIDGE] start_game başarısız, senkron mod:", startRes);
+              var syncInfo2 = getSyncRoundInfo();
+              sendInitToGame({ id: syncInfo2.roundId, state: syncInfo2.state }, result, syncInfo2.countDown);
               startLocalGameLoop();
             }
           });
@@ -688,7 +690,8 @@
     }
     if (!forcedCountDown && state === 1 && countDown === 0) countDown = 15;
 
-    var history = (stateResult && stateResult.lotteryResult) || _lotteryHistory || [];
+    var history = (stateResult && stateResult.lotteryResult && stateResult.lotteryResult.length > 0)
+      ? stateResult.lotteryResult : (_lotteryHistory.length > 0 ? _lotteryHistory : []);
 
     sendRTMToGame("greedy_baby_init", {
       roundId: round ? round.id : 1000,
@@ -833,110 +836,156 @@
     }, betDuration * 1000);
   }
 
-  // Local game loop (Edge Function çalışmıyorsa fallback)
-  var _localRoundId = 1000;
-  function startLocalGameLoop() {
-    console.log("%c[BRIDGE] Local game loop başlatıldı (offline mod)", "color: orange; font-weight: bold;");
-    runLocalRound();
+  // ============================================================
+  // ZAMAN-SENKRON GLOBAL GAME LOOP
+  // Tüm oyuncular aynı tura, aynı saniyeye bakar.
+  // Round süresi: 15s bahis + 5s çark + 5s sonuç = 25s döngü
+  // ============================================================
+  var SYNC_BET_DURATION = 15;
+  var SYNC_LOTTERY_TIME = 5;
+  var SYNC_RESULT_TIME = 5;
+  var SYNC_ROUND_TOTAL = SYNC_BET_DURATION + SYNC_LOTTERY_TIME + SYNC_RESULT_TIME; // 25s
+  var _syncTimer = null;
+  var _syncLastState = -1;
+  var _syncLastRoundId = -1;
+
+  // Deterministik hash: round ID'den kazanan yiyecek belirle (herkes aynı sonucu görür)
+  function hashToFood(roundId) {
+    var h = 0;
+    var s = String(roundId);
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h) % 8;
   }
 
-  function runLocalRound() {
-    _localRoundId++;
-    _currentRoundId = _localRoundId;
-    _currentState = 1;
-    _userBets = {};
-    var betDuration = 15;
-    var LOTTERY_TIME = 5;
-    var RESULT_SHOW_TIME = 3;
-    var winFoodId = Math.floor(Math.random() * 8);
+  function getSyncRoundInfo() {
+    var now = Math.floor(Date.now() / 1000);
+    var roundId = Math.floor(now / SYNC_ROUND_TOTAL);
+    var elapsed = now % SYNC_ROUND_TOTAL;
+    var state, countDown;
+    if (elapsed < SYNC_BET_DURATION) {
+      state = 1; // bahis
+      countDown = SYNC_BET_DURATION - elapsed;
+    } else if (elapsed < SYNC_BET_DURATION + SYNC_LOTTERY_TIME) {
+      state = 2; // çark
+      countDown = (SYNC_BET_DURATION + SYNC_LOTTERY_TIME) - elapsed;
+    } else {
+      state = 3; // sonuç
+      countDown = SYNC_ROUND_TOTAL - elapsed;
+    }
+    var winFoodId = hashToFood(roundId);
+    return { roundId: roundId, state: state, countDown: countDown, elapsed: elapsed, winFoodId: winFoodId };
+  }
 
-    // state=1 (bahis)
-    sendRTMToGame("greedy_baby_state", {
-      roundId: _localRoundId,
-      state: 1,
-      countDown: betDuration,
-      betData: [],
-      serverTime: Date.now(),
-    });
+  function startLocalGameLoop() {
+    console.log("%c[BRIDGE] Senkron global game loop başlatıldı", "color: orange; font-weight: bold;");
+    _syncLastState = -1;
+    _syncLastRoundId = -1;
+    syncTick(); // İlk tick hemen
+    if (_syncTimer) clearInterval(_syncTimer);
+    _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
+  }
 
-    setTimeout(function () {
-      // areaBetData oluştur (çark görselinde bahis chip'leri)
+  function syncTick() {
+    var info = getSyncRoundInfo();
+    var roundChanged = info.roundId !== _syncLastRoundId;
+    var stateChanged = info.state !== _syncLastState;
+
+    if (!roundChanged && !stateChanged) return; // Değişiklik yok
+
+    _currentRoundId = info.roundId;
+    _currentState = info.state;
+
+    // Yeni round başladı
+    if (roundChanged) {
+      _syncLastRoundId = info.roundId;
+      _userBets = {};
+    }
+
+    if (stateChanged) {
+      _syncLastState = info.state;
+    }
+
+    if (info.state === 1) {
+      // Bahis aşaması
+      sendRTMToGame("greedy_baby_state", {
+        roundId: info.roundId,
+        state: 1,
+        countDown: info.countDown,
+        betData: [],
+        serverTime: Date.now(),
+      });
+    } else if (info.state === 2) {
+      // Çark dönüyor
       var localAreaBetData = [];
       for (var fi = 0; fi < 8; fi++) {
-        var ci = Math.floor(Math.random() * 5);
-        var cn = Math.floor(Math.random() * 5) + 1;
+        var ci = (info.roundId + fi) % 5;
+        var cn = ((info.roundId * 3 + fi * 7) % 5) + 1;
         localAreaBetData.push({
           foodId: fi,
-          maxUserBet: fi === winFoodId ? 1 : 0,
+          maxUserBet: fi === info.winFoodId ? 1 : 0,
           chips: [{ index: ci, num: cn }]
         });
       }
-
-      // state=2 (çark dönüyor)
       sendRTMToGame("greedy_baby_state", {
-        roundId: _localRoundId,
+        roundId: info.roundId,
         state: 2,
-        countDown: LOTTERY_TIME,
-        lotteryTime: LOTTERY_TIME,
+        countDown: info.countDown,
+        lotteryTime: SYNC_LOTTERY_TIME,
         areaBetData: localAreaBetData,
+        serverTime: Date.now(),
+      });
+    } else if (info.state === 3 && stateChanged) {
+      // Sonuç — sadece state değiştiğinde bir kere çalışır
+      var winFoodId = info.winFoodId;
+      _lotteryHistory.unshift(winFoodId);
+      if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+      saveLotteryHistory();
+
+      var multiple = MULTIPLIERS[winFoodId];
+      var userWinType = 0;
+      var userAward = 0;
+      if (Object.keys(_userBets).length > 0) {
+        if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+          userWinType = 2;
+          userAward = _userBets[winFoodId] * multiple;
+          _userCoins += userAward;
+        } else {
+          userWinType = 1;
+        }
+      }
+
+      var localTopWinners = [];
+      if (userWinType === 2 && userAward > 0) {
+        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
+      }
+      notifyFlutterCoins(_userCoins);
+
+      sendRTMToGame("greedy_baby_state", {
+        roundId: info.roundId,
+        state: 3,
+        countDown: info.countDown,
+        resultData: {
+          foodId: winFoodId,
+          multiple: multiple,
+          award: userAward,
+          winType: userWinType,
+          resultShowTime: SYNC_RESULT_TIME,
+          todayWin: 0,
+          winUser: localTopWinners,
+        },
+        lotteryResult: _lotteryHistory.slice(0, 20),
+        delayShowResultTime: 0,
+        todayWin: 0,
+        diamond: _userCoins,
         serverTime: Date.now(),
       });
 
       setTimeout(function () {
-        // state=3 (sonuç)
-        _lotteryHistory.unshift(winFoodId);
-        if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
-        saveLotteryHistory();
-
-        var multiple = MULTIPLIERS[winFoodId];
-        var userWinType = 0;
-        var userAward = 0;
-        if (Object.keys(_userBets).length > 0) {
-          if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
-            userWinType = 2;
-            userAward = _userBets[winFoodId] * multiple;
-            _userCoins += userAward;
-          } else {
-            userWinType = 1;
-          }
-        }
-
-        // Kazananlar — sadece gerçek kullanıcı
-        var localTopWinners = [];
-        if (userWinType === 2 && userAward > 0) {
-          localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
-        }
-        notifyFlutterCoins(_userCoins);
-
-        sendRTMToGame("greedy_baby_state", {
-          roundId: _localRoundId,
-          state: 3,
-          countDown: RESULT_SHOW_TIME + 2,
-          resultData: {
-            foodId: winFoodId,
-            multiple: multiple,
-            award: userAward,
-            winType: userWinType,
-            resultShowTime: RESULT_SHOW_TIME,
-            todayWin: Math.floor(Math.random() * 5000),
-            winUser: localTopWinners,
-          },
-          lotteryResult: _lotteryHistory.slice(0, 20),
-          delayShowResultTime: 0,
-          todayWin: 0,
-          diamond: _userCoins,
-          serverTime: Date.now(),
-        });
-
-        setTimeout(function () {
-          sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
-        }, 500);
-
-        setTimeout(function () {
-          runLocalRound();
-        }, (RESULT_SHOW_TIME + 2) * 1000);
-      }, LOTTERY_TIME * 1000);
-    }, betDuration * 1000);
+        sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+      }, 500);
+    }
   }
 
   // ============================================================
