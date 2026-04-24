@@ -388,6 +388,7 @@
       deviceId: "flutter_device",
       nickname: NICKNAME,
       avatar: AVATAR,
+      icon: AVATAR,
       diamond: _userCoins,
       coin: _userCoins
     };
@@ -1024,8 +1025,9 @@
 
       var localTopWinners = [];
       if (userWinType === 2 && userAward > 0) {
-        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
+        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", avatar: AVATAR || "", award: userAward });
       }
+      console.log("%c[BRIDGE] Settle: winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
       sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
       notifyFlutterCoins(_userCoins);
@@ -1247,7 +1249,8 @@
   var _rankHidden = false;
   var _rechargeBtnPatched = false;
   var _nodesDumped = false;
-  var _chipLabelPinkColor = null; // cc.Color nesnesi (lazy init)
+  var _chipLabelBlackColor = null;
+  var _chipBgPinkColor = null;
   function patchCocosLabels() {
     try {
       var cc = window.cc;
@@ -1353,16 +1356,24 @@
           }
         }
       }
-      // you_chip_label rengini pembe yap
-      if (cc.Color) {
-        if (!_chipLabelPinkColor) {
-          _chipLabelPinkColor = new cc.Color(255, 80, 200, 255);
+      // you_chip: arka plan pembe, yazı siyah
+      if (cc.Color && cc.Sprite) {
+        if (!_chipLabelBlackColor) {
+          _chipLabelBlackColor = new cc.Color(0, 0, 0, 255);
+          _chipBgPinkColor = new cc.Color(255, 80, 200, 255);
         }
         for (var ci = 0; ci < allNodes.length; ci++) {
-          if (allNodes[ci].name === "you_chip_label") {
-            var chipLbl = allNodes[ci].getComponent(cc.Label);
-            if (chipLbl && chipLbl.color) {
-              chipLbl.color = _chipLabelPinkColor;
+          var nd2 = allNodes[ci];
+          if (nd2.name === "you_chip_label") {
+            var chipLbl = nd2.getComponent(cc.Label);
+            if (chipLbl) {
+              chipLbl.color = _chipLabelBlackColor;
+            }
+          }
+          if (nd2.name === "you_chip") {
+            var chipSprite = nd2.getComponent(cc.Sprite);
+            if (chipSprite) {
+              chipSprite.color = _chipBgPinkColor;
             }
           }
         }
