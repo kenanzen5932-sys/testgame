@@ -471,18 +471,29 @@
     return null;
   }
 
-  // Sessiz MP3 (tiny valid mp3 — base64)
-  var SILENT_MP3_B64 = "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwBHAAAAAAD/+1DEAAAB8AHoAAAAACWAPQAAAAQAAAGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8=";
-  var _silentAudioBlob = null;
-  function getSilentAudioBlob() {
-    if (!_silentAudioBlob) {
-      var byteStr = atob(SILENT_MP3_B64);
-      var ab = new ArrayBuffer(byteStr.length);
-      var ia = new Uint8Array(ab);
-      for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
-      _silentAudioBlob = new Blob([ab], { type: "audio/mpeg" });
+  // Minimal sessiz WAV — ArrayBuffer olarak (atob gerektirmez)
+  var _silentAudioBuf = null;
+  function getSilentAudioBuffer() {
+    if (!_silentAudioBuf) {
+      var buf = new ArrayBuffer(46);
+      var d = new DataView(buf);
+      d.setUint32(0, 0x52494646, false);  // "RIFF"
+      d.setUint32(4, 38, true);           // file size - 8
+      d.setUint32(8, 0x57415645, false);  // "WAVE"
+      d.setUint32(12, 0x666D7420, false); // "fmt "
+      d.setUint32(16, 16, true);          // chunk size
+      d.setUint16(20, 1, true);           // PCM
+      d.setUint16(22, 1, true);           // mono
+      d.setUint32(24, 44100, true);       // sample rate
+      d.setUint32(28, 88200, true);       // byte rate
+      d.setUint16(32, 2, true);           // block align
+      d.setUint16(34, 16, true);          // bits per sample
+      d.setUint32(36, 0x64617461, false); // "data"
+      d.setUint32(40, 2, true);           // data size
+      d.setInt16(44, 0, true);            // silence
+      _silentAudioBuf = buf;
     }
-    return _silentAudioBlob;
+    return _silentAudioBuf;
   }
 
   function isAudioUrl(url) {
@@ -516,28 +527,12 @@
         if (self.onreadystatechange) self.onreadystatechange();
       }, 50);
     } else if (this._isAudio) {
-      // Ses dosyası → sessiz mp3 döndür (404 döngüsünü engelle)
+      // Ses dosyası → sessiz WAV ArrayBuffer döndür (404 spamı engeller)
       setTimeout(function () {
         self.status = 200; self.readyState = 4;
-        self.response = (self.responseType === "arraybuffer") ? getSilentAudioBlob().arrayBuffer ? null : getSilentAudioBlob() : getSilentAudioBlob();
-        try {
-          if (self.responseType === "arraybuffer") {
-            var reader = new FileReader();
-            reader.onload = function () {
-              self.response = reader.result;
-              if (self.onload) self.onload();
-              if (self.onreadystatechange) self.onreadystatechange();
-            };
-            reader.readAsArrayBuffer(getSilentAudioBlob());
-          } else {
-            self.response = getSilentAudioBlob();
-            if (self.onload) self.onload();
-            if (self.onreadystatechange) self.onreadystatechange();
-          }
-        } catch(e) {
-          self.response = getSilentAudioBlob();
-          if (self.onload) self.onload();
-        }
+        self.response = getSilentAudioBuffer();
+        if (self.onload) self.onload();
+        if (self.onreadystatechange) self.onreadystatechange();
       }, 10);
     } else {
       var xr = this._realXHR;
@@ -560,7 +555,7 @@
       return Promise.resolve(new Response(JSON.stringify(mockResp), { status: 200, headers: { "Content-Type": "application/json" } }));
     }
     if (isAudioUrl(urlStr)) {
-      return Promise.resolve(new Response(getSilentAudioBlob(), { status: 200, headers: { "Content-Type": "audio/mpeg" } }));
+      return Promise.resolve(new Response(getSilentAudioBuffer(), { status: 200, headers: { "Content-Type": "audio/wav" } }));
     }
     return originalFetch.apply(window, arguments);
   };
@@ -682,13 +677,25 @@
         var LOTTERY_TIME = 5;
         console.log("%c[BRIDGE] Kazanan: " + lRes.win_food_name + " (x" + lRes.multiplier + ")", "color: gold;");
 
+        // areaBetData oluştur (çark görselinde bahis chip'leri)
+        var areaBetData = [];
+        for (var fi = 0; fi < 8; fi++) {
+          var ci = Math.floor(Math.random() * 5);
+          var cn = Math.floor(Math.random() * 5) + 1;
+          areaBetData.push({
+            foodId: fi,
+            maxUserBet: fi === winFoodId ? 1 : 0,
+            chips: [{ index: ci, num: cn }]
+          });
+        }
+
         // state=2 gönder (çark dönüyor)
         sendRTMToGame("greedy_baby_state", {
           roundId: roundId,
           state: 2,
           countDown: LOTTERY_TIME,
           lotteryTime: LOTTERY_TIME,
-          areaBetData: [],
+          areaBetData: areaBetData,
           serverTime: Date.now(),
         });
 
@@ -716,6 +723,21 @@
               }
             }
 
+            // Top 3 kazananlar oluştur
+            var topWinners = sRes.top_winners || [];
+            if (topWinners.length === 0) {
+              var fakeNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Ali", "Zeynep"];
+              var shuffled = fakeNames.sort(function () { return Math.random() - 0.5; });
+              for (var wi = 0; wi < 3; wi++) {
+                topWinners.push({ name: shuffled[wi], icon: "", award: Math.floor(Math.random() * 50000) + 1000 });
+              }
+            }
+            if (userWinType === 2 && userAward > 0) {
+              topWinners.push({ name: NICKNAME || "Oyuncu", icon: "", award: userAward });
+            }
+            topWinners.sort(function (a, b) { return b.award - a.award; });
+            topWinners = topWinners.slice(0, 3);
+
             // state=3 gönder (sonuç)
             sendRTMToGame("greedy_baby_state", {
               roundId: roundId,
@@ -727,8 +749,8 @@
                 award: userAward,
                 winType: userWinType,
                 resultShowTime: RESULT_SHOW_TIME,
-                todayWin: 0,
-                winUser: sRes.top_winners || [],
+                todayWin: Math.floor(Math.random() * 5000),
+                winUser: topWinners,
               },
               lotteryResult: _lotteryHistory.slice(0, 10),
               delayShowResultTime: 0,
@@ -795,13 +817,25 @@
     });
 
     setTimeout(function () {
+      // areaBetData oluştur (çark görselinde bahis chip'leri)
+      var localAreaBetData = [];
+      for (var fi = 0; fi < 8; fi++) {
+        var ci = Math.floor(Math.random() * 5);
+        var cn = Math.floor(Math.random() * 5) + 1;
+        localAreaBetData.push({
+          foodId: fi,
+          maxUserBet: fi === winFoodId ? 1 : 0,
+          chips: [{ index: ci, num: cn }]
+        });
+      }
+
       // state=2 (çark dönüyor)
       sendRTMToGame("greedy_baby_state", {
         roundId: _localRoundId,
         state: 2,
         countDown: LOTTERY_TIME,
         lotteryTime: LOTTERY_TIME,
-        areaBetData: [],
+        areaBetData: localAreaBetData,
         serverTime: Date.now(),
       });
 
@@ -823,6 +857,19 @@
           }
         }
 
+        // Top 3 kazananlar (local mod)
+        var localFakeNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Ali", "Zeynep"];
+        var localShuffled = localFakeNames.sort(function () { return Math.random() - 0.5; });
+        var localTopWinners = [];
+        for (var wi = 0; wi < 3; wi++) {
+          localTopWinners.push({ name: localShuffled[wi], icon: "", award: Math.floor(Math.random() * 50000) + 1000 });
+        }
+        if (userWinType === 2 && userAward > 0) {
+          localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: "", award: userAward });
+        }
+        localTopWinners.sort(function (a, b) { return b.award - a.award; });
+        localTopWinners = localTopWinners.slice(0, 3);
+
         sendRTMToGame("greedy_baby_state", {
           roundId: _localRoundId,
           state: 3,
@@ -833,12 +880,12 @@
             award: userAward,
             winType: userWinType,
             resultShowTime: RESULT_SHOW_TIME,
-            todayWin: 0,
-            winUser: [],
+            todayWin: Math.floor(Math.random() * 5000),
+            winUser: localTopWinners,
           },
           lotteryResult: _lotteryHistory.slice(0, 10),
           delayShowResultTime: 0,
-          todayWin: 0,
+          todayWin: Math.floor(Math.random() * 5000),
           diamond: _userCoins,
           serverTime: Date.now(),
         });
