@@ -450,6 +450,23 @@
   window.fun.nativeToH5 = function () {};
   window.fun.h5ToNative = function (data) {
     console.log("%c[BRIDGE FUN] h5ToNative", "color: #ff9800;", data);
+    try {
+      var parsed = typeof data === "string" ? JSON.parse(data) : data;
+      var action = (parsed.action || parsed.method || parsed.type || parsed.name || "").toLowerCase();
+      var target = (parsed.target || parsed.page || parsed.url || "").toLowerCase();
+      var combined = action + " " + target + " " + JSON.stringify(parsed).toLowerCase();
+      if (combined.indexOf("recharge") !== -1 || combined.indexOf("charge") !== -1 ||
+          combined.indexOf("diamond") !== -1 || combined.indexOf("topup") !== -1 ||
+          combined.indexOf("wallet") !== -1 || combined.indexOf("coin") !== -1 ||
+          combined.indexOf("shop") !== -1) {
+        console.log("%c[BRIDGE] h5ToNative → coins sayfası açılıyor", "color: lime;");
+        notifyFlutterOpenCoinsPage();
+      }
+      if (combined.indexOf("close") !== -1 && combined.indexOf("loading") === -1) {
+        console.log("%c[BRIDGE] h5ToNative → oyun kapatılıyor", "color: lime;");
+        notifyFlutterClose();
+      }
+    } catch (e) {}
   };
 
   // ============================================================
@@ -488,6 +505,15 @@
       return typeof resp === "function" ? resp() : (resp || "");
     }
     console.warn("[BRIDGE PROMPT] Unknown:", method, params || "");
+    var ml = (method || "").toLowerCase();
+    if (ml.indexOf("recharge") !== -1 || ml.indexOf("charge") !== -1 ||
+        ml.indexOf("diamond") !== -1 || ml.indexOf("topup") !== -1 ||
+        ml.indexOf("wallet") !== -1 || ml.indexOf("shop") !== -1) {
+      notifyFlutterOpenCoinsPage();
+    }
+    if (ml.indexOf("close") !== -1 && ml.indexOf("loading") === -1) {
+      notifyFlutterClose();
+    }
     return wrapBridgeResponse({});
   };
 
@@ -1197,6 +1223,8 @@
   }
 
   var _rankHidden = false;
+  var _rechargeBtnPatched = false;
+  var _nodesDumped = false;
   function patchCocosLabels() {
     try {
       var cc = window.cc;
@@ -1226,9 +1254,10 @@
         }
       }
 
+      var allNodes = [];
+      collectAllNodes(scene, allNodes);
+
       if (!_rankHidden) {
-        var allNodes = [];
-        collectAllNodes(scene, allNodes);
         for (var j = 0; j < allNodes.length; j++) {
           var nd = allNodes[j];
           if (nd.name && nd.active !== false && (
@@ -1238,6 +1267,66 @@
           )) {
             nd.active = false;
             _rankHidden = true;
+          }
+        }
+      }
+
+      // Tüm buton node isimlerini bir kez logla (debug)
+      if (!_nodesDumped && cc.Button) {
+        var btns = scene.getComponentsInChildren(cc.Button);
+        if (btns && btns.length) {
+          var names = [];
+          for (var bi = 0; bi < btns.length; bi++) {
+            names.push(btns[bi].node.name);
+          }
+          console.log("%c[BRIDGE] Tüm buton node isimleri: " + names.join(", "), "color: cyan;");
+          _nodesDumped = true;
+        }
+      }
+
+      // Recharge/Add butonu bul ve Flutter'a bağla
+      if (!_rechargeBtnPatched && cc.Button) {
+        var buttons = scene.getComponentsInChildren(cc.Button);
+        if (buttons && buttons.length) {
+          for (var b = 0; b < buttons.length; b++) {
+            var bNode = buttons[b].node;
+            var bName = (bNode.name || "").toLowerCase();
+            if (bName.indexOf("recharge") !== -1 || bName.indexOf("charge") !== -1 ||
+                bName.indexOf("adddia") !== -1 || bName.indexOf("add_dia") !== -1 ||
+                bName.indexOf("adddiamond") !== -1 || bName.indexOf("diamond") !== -1 ||
+                bName.indexOf("plus") !== -1 || bName.indexOf("topup") !== -1 ||
+                bName.indexOf("充值") !== -1 || bName.indexOf("shop") !== -1 ||
+                bName.indexOf("wallet") !== -1 || bName.indexOf("coin") !== -1) {
+              console.log("%c[BRIDGE] Recharge butonu bulundu: " + bNode.name, "color: lime; font-weight: bold;");
+              (function(node) {
+                node.on(cc.Node.EventType.TOUCH_END, function() {
+                  console.log("%c[BRIDGE] Recharge butonu tıklandı → coins sayfası", "color: lime;");
+                  notifyFlutterOpenCoinsPage();
+                });
+              })(bNode);
+              _rechargeBtnPatched = true;
+            }
+          }
+        }
+        // Label "+" olan node'u da dene
+        if (!_rechargeBtnPatched) {
+          for (var li = 0; li < allNodes.length; li++) {
+            var an = allNodes[li];
+            var anName = (an.name || "").toLowerCase();
+            if (anName.indexOf("recharge") !== -1 || anName.indexOf("charge") !== -1 ||
+                anName.indexOf("adddia") !== -1 || anName.indexOf("diamond_add") !== -1 ||
+                anName.indexOf("btn_add") !== -1 || anName.indexOf("btnadd") !== -1 ||
+                anName === "add" || anName === "plus") {
+              console.log("%c[BRIDGE] Recharge node bulundu: " + an.name, "color: lime; font-weight: bold;");
+              (function(node) {
+                node.on(cc.Node.EventType.TOUCH_END, function() {
+                  console.log("%c[BRIDGE] Recharge node tıklandı → coins sayfası", "color: lime;");
+                  notifyFlutterOpenCoinsPage();
+                });
+              })(an);
+              _rechargeBtnPatched = true;
+              break;
+            }
           }
         }
       }
