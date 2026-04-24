@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.3";
+  var BRIDGE_VERSION = "v2.4";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1028,45 +1028,54 @@
   }
 
   // ============================================================
-  // 8b) AUTO-INIT: Tekrarlayan interval ile otomatik init (tek seferlik timeout güvenilmez)
+  // 8b) AUTO-INIT: Basit setTimeout + RTMResponseMsg tetikleyici (v2.4)
   // ============================================================
-  (function setupAutoInit() {
-    // Yöntem 1: window.RTMResponseMsg interceptor
-    var _realRTMResponseMsg = null;
-    var _rtmReady = false;
+
+  // Yöntem 1: RTMResponseMsg interceptor — oyun set edince 3s sonra init
+  var _realRTMResponseMsg = null;
+  try {
     Object.defineProperty(window, "RTMResponseMsg", {
       set: function (fn) {
         _realRTMResponseMsg = fn;
-        _rtmReady = true;
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
+        setTimeout(function () {
+          try {
+            if (!_gameInitDone) {
+              console.log("%c[BRIDGE] RTMResponseMsg 3s timer → handleGameInit", "color: orange; font-weight: bold;");
+              handleGameInit();
+            }
+          } catch (e) { console.error("[BRIDGE] RTM timer init hata:", e); }
+        }, 3000);
       },
       get: function () { return _realRTMResponseMsg; },
       configurable: true
     });
+    console.log("%c[BRIDGE] RTMResponseMsg interceptor kuruldu ✓", "color: #4CAF50;");
+  } catch (dpErr) {
+    console.error("[BRIDGE] RTMResponseMsg defineProperty hatası:", dpErr);
+  }
 
-    // Yöntem 2: Tekrarlayan interval — her 2s kontrol, RTM hazır olduktan 4s sonra init
-    var _rtmReadyAt = 0;
-    var _initCheckInterval = setInterval(function () {
-      if (_gameInitDone) {
-        clearInterval(_initCheckInterval);
-        console.log("%c[BRIDGE] AUTO-INIT interval durduruldu (init tamamlandı)", "color: gray;");
-        return;
+  // Yöntem 2: 5s güvenlik timeout — en basit ve güvenilir
+  setTimeout(function () {
+    try {
+      if (!_gameInitDone) {
+        console.log("%c[BRIDGE] 5s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+        handleGameInit();
+      } else {
+        console.log("%c[BRIDGE] 5s timeout → zaten init olmuş, skip", "color: gray;");
       }
-      var now = Date.now();
-      // RTM hazır olduysa zamanı kaydet
-      if (_rtmReady && !_rtmReadyAt) {
-        _rtmReadyAt = now;
-        console.log("%c[BRIDGE] RTM hazır zamanı kaydedildi, 4s sonra init denenecek", "color: yellow;");
-      }
-      // RTM hazır + 4s geçtiyse VEYA toplam 8s geçtiyse → init
-      if ((_rtmReadyAt && now - _rtmReadyAt >= 4000) || now - _autoInitStartTime >= 8000) {
-        console.log("%c[BRIDGE] AUTO-INIT tetikleniyor: rtmReady=" + _rtmReady + " elapsed=" + (now - _autoInitStartTime) + "ms", "color: orange; font-weight: bold;");
-        clearInterval(_initCheckInterval);
+    } catch (e) { console.error("[BRIDGE] 5s timeout init hata:", e); }
+  }, 5000);
+
+  // Yöntem 3: 10s mutlak fallback
+  setTimeout(function () {
+    try {
+      if (!_gameInitDone) {
+        console.log("%c[BRIDGE] 10s MUTLAK fallback → handleGameInit", "color: red; font-weight: bold;");
         handleGameInit();
       }
-    }, 1500);
-    var _autoInitStartTime = Date.now();
-  })();
+    } catch (e) { console.error("[BRIDGE] 10s fallback init hata:", e); }
+  }, 10000);
 
   // Master olarak oyun döngüsünü başlat
   function startMasterGameLoop() {
