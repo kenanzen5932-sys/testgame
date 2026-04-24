@@ -549,43 +549,262 @@
       callGameEngine("get_state").then(function (result) {
         if (!result || !result.success) {
           console.error("[BRIDGE] get_state başarısız:", result);
+          // Offline mod — mock init gönder
+          sendInitToGame(null, result);
+          startLocalGameLoop();
           return;
         }
 
         _userCoins = result.coins || 0;
-
         var round = result.round;
-        var state = round ? round.state : 0;
-        var countDown = 0;
 
-        if (round && round.bet_ends_at) {
-          var remaining = Math.max(0, Math.floor((new Date(round.bet_ends_at).getTime() - Date.now()) / 1000));
-          countDown = remaining;
+        if (round && round.state < 4) {
+          // Aktif round var
+          var state = round.state;
+          var countDown = 0;
+          if (round.bet_ends_at) {
+            countDown = Math.max(0, Math.floor((new Date(round.bet_ends_at).getTime() - Date.now()) / 1000));
+          }
+          sendInitToGame(round, result);
+          _currentRoundId = round.id;
+          _currentState = state;
+        } else {
+          // Aktif round yok — başlat
+          console.log("%c[BRIDGE] Aktif round yok, yeni başlatılıyor...", "color: gold;");
+          callGameEngine("start_game").then(function (startRes) {
+            if (startRes && startRes.success) {
+              _currentRoundId = startRes.round_id;
+              _currentState = 1;
+              sendInitToGame({ id: startRes.round_id, state: 1 }, result, startRes.bet_duration || 15);
+              // Bahis süresi sonunda otomatik lottery → settle → next
+              scheduleRoundProgression(startRes.round_id, startRes.bet_duration || 15);
+            } else {
+              // Start da başarısız — local game loop
+              console.warn("[BRIDGE] start_game başarısız, local loop:", startRes);
+              sendInitToGame(null, result);
+              startLocalGameLoop();
+            }
+          });
         }
-
-        // Init response gönder
-        sendRTMToGame("greedy_baby_init", {
-          roundId: round ? round.id : 0,
-          state: state || 0,
-          countDown: countDown,
-          diamond: _userCoins,
-          bets: [100, 1000, 5000, 10000, 50000],
-          betData: [],
-          rank: 0,
-          lotteryTime: 5,
-          lotteryResult: result.lotteryResult || [],
-          todayWin: 0,
-          winFoodId: -1,
-          serverTime: Date.now(),
-        });
-
-        _currentRoundId = round ? round.id : null;
-        _currentState = state || 0;
       });
 
       // PieSocket bağlan
       connectPieSocket();
     });
+  }
+
+  function sendInitToGame(round, stateResult, forcedCountDown) {
+    var state = round ? round.state : 1;
+    var countDown = forcedCountDown || 0;
+    if (!forcedCountDown && round && round.bet_ends_at) {
+      countDown = Math.max(0, Math.floor((new Date(round.bet_ends_at).getTime() - Date.now()) / 1000));
+    }
+    if (!forcedCountDown && state === 1 && countDown === 0) countDown = 15;
+
+    var history = (stateResult && stateResult.lotteryResult) || [];
+
+    sendRTMToGame("greedy_baby_init", {
+      roundId: round ? round.id : 1000,
+      state: state,
+      countDown: countDown,
+      diamond: _userCoins,
+      bets: [100, 1000, 5000, 10000, 50000],
+      betData: [],
+      rank: 0,
+      lotteryTime: 5,
+      lotteryResult: history,
+      todayWin: 0,
+      winFoodId: -1,
+      serverTime: Date.now(),
+    });
+  }
+
+  var _lotteryHistory = [];
+
+  // Round ilerlemesi: bahis süresi → lottery → settle → next round
+  function scheduleRoundProgression(roundId, betDuration) {
+    console.log("%c[BRIDGE] Round " + roundId + " | " + betDuration + "s bahis başladı", "color: gold;");
+    setTimeout(function () {
+      // Lottery
+      callGameEngine("run_lottery", { round_id: roundId }).then(function (lRes) {
+        if (!lRes || !lRes.success) {
+          console.warn("[BRIDGE] run_lottery başarısız:", lRes);
+          return;
+        }
+        var winFoodId = lRes.win_food_id;
+        var LOTTERY_TIME = 5;
+        console.log("%c[BRIDGE] Kazanan: " + lRes.win_food_name + " (x" + lRes.multiplier + ")", "color: gold;");
+
+        // state=2 gönder (çark dönüyor)
+        sendRTMToGame("greedy_baby_state", {
+          roundId: roundId,
+          state: 2,
+          countDown: LOTTERY_TIME,
+          lotteryTime: LOTTERY_TIME,
+          areaBetData: [],
+          serverTime: Date.now(),
+        });
+
+        // Lottery süresi sonra settle
+        setTimeout(function () {
+          callGameEngine("settle", { round_id: roundId, food_id: winFoodId }).then(function (sRes) {
+            if (!sRes) return;
+
+            _lotteryHistory.unshift(winFoodId);
+            if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+
+            var multiple = sRes.multiplier || MULTIPLIERS[winFoodId];
+            var RESULT_SHOW_TIME = 3;
+
+            // Kullanıcının kazanıp kazanmadığını hesapla
+            var userWinType = 0;
+            var userAward = 0;
+            if (Object.keys(_userBets).length > 0) {
+              if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+                userWinType = 2;
+                userAward = _userBets[winFoodId] * multiple;
+                _userCoins += userAward;
+              } else {
+                userWinType = 1;
+              }
+            }
+
+            // state=3 gönder (sonuç)
+            sendRTMToGame("greedy_baby_state", {
+              roundId: roundId,
+              state: 3,
+              countDown: RESULT_SHOW_TIME + 2,
+              resultData: {
+                foodId: winFoodId,
+                multiple: multiple,
+                award: userAward,
+                winType: userWinType,
+                resultShowTime: RESULT_SHOW_TIME,
+                todayWin: 0,
+                winUser: sRes.top_winners || [],
+              },
+              lotteryResult: _lotteryHistory.slice(0, 10),
+              delayShowResultTime: 0,
+              todayWin: 0,
+              diamond: _userCoins,
+              serverTime: Date.now(),
+            });
+
+            // Rank bilgisi
+            setTimeout(function () {
+              sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+            }, 500);
+
+            // Sonuç gösterim süresi sonra yeni round
+            setTimeout(function () {
+              callGameEngine("next_round", { round_id: roundId }).then(function (nRes) {
+                if (nRes && nRes.success) {
+                  _currentRoundId = nRes.round_id;
+                  _currentState = 1;
+                  _userBets = {};
+
+                  sendRTMToGame("greedy_baby_state", {
+                    roundId: nRes.round_id,
+                    state: 1,
+                    countDown: 15,
+                    betData: [],
+                    serverTime: Date.now(),
+                  });
+
+                  scheduleRoundProgression(nRes.round_id, 15);
+                }
+              });
+            }, (RESULT_SHOW_TIME + 2) * 1000);
+          });
+        }, LOTTERY_TIME * 1000);
+      });
+    }, betDuration * 1000);
+  }
+
+  // Local game loop (Edge Function çalışmıyorsa fallback)
+  var _localRoundId = 1000;
+  function startLocalGameLoop() {
+    console.log("%c[BRIDGE] Local game loop başlatıldı (offline mod)", "color: orange; font-weight: bold;");
+    runLocalRound();
+  }
+
+  function runLocalRound() {
+    _localRoundId++;
+    _currentRoundId = _localRoundId;
+    _currentState = 1;
+    _userBets = {};
+    var betDuration = 15;
+    var LOTTERY_TIME = 5;
+    var RESULT_SHOW_TIME = 3;
+    var winFoodId = Math.floor(Math.random() * 8);
+
+    // state=1 (bahis)
+    sendRTMToGame("greedy_baby_state", {
+      roundId: _localRoundId,
+      state: 1,
+      countDown: betDuration,
+      betData: [],
+      serverTime: Date.now(),
+    });
+
+    setTimeout(function () {
+      // state=2 (çark dönüyor)
+      sendRTMToGame("greedy_baby_state", {
+        roundId: _localRoundId,
+        state: 2,
+        countDown: LOTTERY_TIME,
+        lotteryTime: LOTTERY_TIME,
+        areaBetData: [],
+        serverTime: Date.now(),
+      });
+
+      setTimeout(function () {
+        // state=3 (sonuç)
+        _lotteryHistory.unshift(winFoodId);
+        if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+
+        var multiple = MULTIPLIERS[winFoodId];
+        var userWinType = 0;
+        var userAward = 0;
+        if (Object.keys(_userBets).length > 0) {
+          if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+            userWinType = 2;
+            userAward = _userBets[winFoodId] * multiple;
+            _userCoins += userAward;
+          } else {
+            userWinType = 1;
+          }
+        }
+
+        sendRTMToGame("greedy_baby_state", {
+          roundId: _localRoundId,
+          state: 3,
+          countDown: RESULT_SHOW_TIME + 2,
+          resultData: {
+            foodId: winFoodId,
+            multiple: multiple,
+            award: userAward,
+            winType: userWinType,
+            resultShowTime: RESULT_SHOW_TIME,
+            todayWin: 0,
+            winUser: [],
+          },
+          lotteryResult: _lotteryHistory.slice(0, 10),
+          delayShowResultTime: 0,
+          todayWin: 0,
+          diamond: _userCoins,
+          serverTime: Date.now(),
+        });
+
+        setTimeout(function () {
+          sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+        }, 500);
+
+        setTimeout(function () {
+          runLocalRound();
+        }, (RESULT_SHOW_TIME + 2) * 1000);
+      }, LOTTERY_TIME * 1000);
+    }, betDuration * 1000);
   }
 
   // ============================================================
@@ -801,6 +1020,20 @@
   }
 
   setInterval(patchCocosLabels, 500);
+
+  // networkState'i online yap + globalContext patch
+  var netInterval = setInterval(function () {
+    if (window.game && window.game.netEventManger) {
+      var mgr = window.game.netEventManger;
+      if (mgr.constructor) {
+        mgr.constructor.networkState = 1;
+      }
+      if (!mgr._userInfo || !mgr._userInfo.token) {
+        mgr._userInfo = getUserInfoData();
+      }
+    }
+  }, 300);
+  setTimeout(function () { clearInterval(netInterval); }, 15000);
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
