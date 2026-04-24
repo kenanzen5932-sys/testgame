@@ -38,7 +38,7 @@
       NICKNAME = u.nickname || "Oyuncu";
       AVATAR = u.avatar || "";
       _authReady = true;
-      console.log("%c[BRIDGE] FLUTTER_USER okundu: " + NICKNAME + " room=" + ROOM_ID, "color: lime;");
+      console.log("%c[BRIDGE] FLUTTER_USER okundu: " + NICKNAME + " room=" + ROOM_ID + " avatar=" + AVATAR, "color: lime;");
       return true;
     }
     return false;
@@ -1247,6 +1247,7 @@
   var _rankHidden = false;
   var _rechargeBtnPatched = false;
   var _nodesDumped = false;
+  var _chipLabelPinkColor = null; // cc.Color nesnesi (lazy init)
   function patchCocosLabels() {
     try {
       var cc = window.cc;
@@ -1348,6 +1349,20 @@
               })(an);
               _rechargeBtnPatched = true;
               break;
+            }
+          }
+        }
+      }
+      // you_chip_label rengini pembe yap
+      if (cc.Color) {
+        if (!_chipLabelPinkColor) {
+          _chipLabelPinkColor = new cc.Color(255, 80, 200, 255);
+        }
+        for (var ci = 0; ci < allNodes.length; ci++) {
+          if (allNodes[ci].name === "you_chip_label") {
+            var chipLbl = allNodes[ci].getComponent(cc.Label);
+            if (chipLbl && chipLbl.color) {
+              chipLbl.color = _chipLabelPinkColor;
             }
           }
         }
