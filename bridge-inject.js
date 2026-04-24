@@ -68,6 +68,7 @@
   var _userCoins = 0;
   var _userBets = {}; // { foodId: totalBet } bu round için
   var _currentWinners = []; // settle sonucu top 3 kazananlar (avatar URL'leriyle)
+  var _avatarSFCache = {}; // url -> cc.SpriteFrame (pre-loaded avatar cache)
   var _socket = null;
   var _gameLoopTimer = null;
   // Bugünkü toplam kazanç — localStorage'da günlük sakla
@@ -434,6 +435,7 @@
     saveLotteryHistory();
 
     _currentWinners = topWinners;
+    preloadWinnerAvatars();
     console.log("%c[BRIDGE] Settle(listener): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
     sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
     notifyFlutterCoins(_userCoins);
@@ -608,13 +610,24 @@
       img.crossOrigin = "anonymous";
       img.onload = function () {
         console.log("%c[BRIDGE] Avatar ön-yüklendi: " + img.width + "x" + img.height, "color: lime;");
-        // Cocos assetManager cache'e ekle
+        // Cocos assetManager cache'e ekle + SpriteFrame oluştur
         try {
           var cc = window.cc;
-          if (cc && cc.assetManager) {
-            cc.assetManager.loadRemote(AVATAR, { ext: ".png" }, function (err) {
-              if (err) console.warn("[BRIDGE] Avatar Cocos cache hata:", err);
-              else console.log("%c[BRIDGE] Avatar Cocos cache OK", "color: lime;");
+          if (cc && cc.assetManager && cc.Texture2D && cc.SpriteFrame) {
+            cc.assetManager.loadRemote(AVATAR, { ext: ".jpg" }, function (err, asset) {
+              if (!err && asset) {
+                _buildAvatarSF(AVATAR, asset);
+                console.log("%c[BRIDGE] Avatar Cocos cache OK", "color: lime;");
+              } else {
+                cc.assetManager.loadRemote(AVATAR, { ext: ".png" }, function (err2, asset2) {
+                  if (!err2 && asset2) {
+                    _buildAvatarSF(AVATAR, asset2);
+                    console.log("%c[BRIDGE] Avatar Cocos cache OK (.png)", "color: lime;");
+                  } else {
+                    console.warn("[BRIDGE] Avatar Cocos cache hata:", err, err2);
+                  }
+                });
+              }
             });
           }
         } catch (e2) {}
@@ -1092,6 +1105,7 @@
             addBetRecord(roundId, winFoodId, _userBets, userAward, _userCoins);
 
             _currentWinners = topWinners;
+            preloadWinnerAvatars();
             console.log("%c[BRIDGE] Settle(master): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
             sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
             notifyFlutterCoins(_userCoins);
@@ -1185,7 +1199,52 @@
       }
     }
     winners.sort(function (a, b) { return b.award - a.award; });
-    return winners.slice(0, 3);
+    var top3 = winners.slice(0, 3);
+    for (var wi = 0; wi < top3.length; wi++) {
+      console.log("%c[BRIDGE] Winner[" + wi + "]: " + top3[wi].name + " icon=" + (top3[wi].icon ? top3[wi].icon.substring(0, 80) : "EMPTY"), "color: orange;");
+    }
+    return top3;
+  }
+
+  // Avatar'ları önceden yükle ve SpriteFrame cache'ine koy
+  function preloadWinnerAvatars() {
+    if (typeof cc === "undefined" || !cc.assetManager || !cc.Texture2D || !cc.SpriteFrame) return;
+    for (var wi = 0; wi < _currentWinners.length; wi++) {
+      var url = _currentWinners[wi].avatar || _currentWinners[wi].icon || "";
+      if (!url || _avatarSFCache[url]) continue;
+      (function(avatarUrl) {
+        // ext olarak .jpg dene, başarısız olursa .png dene
+        cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
+          if (err || !imgAsset) {
+            console.warn("[BRIDGE] Avatar .jpg yükleme başarısız, .png deneniyor:", avatarUrl, err);
+            cc.assetManager.loadRemote(avatarUrl, { ext: ".png" }, function(err2, imgAsset2) {
+              if (!err2 && imgAsset2) {
+                _buildAvatarSF(avatarUrl, imgAsset2);
+              } else {
+                console.error("[BRIDGE] Avatar yükleme tamamen başarısız:", avatarUrl, err2);
+              }
+            });
+            return;
+          }
+          _buildAvatarSF(avatarUrl, imgAsset);
+        });
+      })(url);
+    }
+  }
+
+  function _buildAvatarSF(url, imgAsset) {
+    try {
+      var tex = new cc.Texture2D();
+      tex.image = imgAsset;
+      var sf = new cc.SpriteFrame();
+      sf.texture = tex;
+      sf.packable = false;
+      sf.addRef();
+      _avatarSFCache[url] = sf;
+      console.log("%c[BRIDGE] Avatar cached OK: " + url.substring(0, 60), "color: #4CAF50;");
+    } catch(e) {
+      console.error("[BRIDGE] Avatar SpriteFrame oluşturma hatası:", e);
+    }
   }
 
   // ============================================================
@@ -1253,6 +1312,7 @@
     if (roundChanged) {
       _syncLastRoundId = info.roundId;
       _userBets = {};
+      _allBets = {};
       _currentWinners = [];
     }
 
@@ -1331,6 +1391,7 @@
       // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
       var localTopWinners = buildAllWinners(winFoodId, multiple);
       _currentWinners = localTopWinners;
+      preloadWinnerAvatars();
       console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
       sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
@@ -1744,11 +1805,10 @@
           }
         }
       }
-      // Avatar force-patch: settle view'daki winner head_img sprite'larına doğru avatarı yükle
-      if (cc.assetManager && cc.Texture2D && cc.SpriteFrame && _currentWinners.length > 0) {
+      // Avatar force-patch: cached SpriteFrame'leri winner head_img sprite'larına ata
+      if (cc.Sprite && cc.assetManager && _currentWinners.length > 0) {
         for (var hi = 0; hi < allNodes.length; hi++) {
           var hn = allNodes[hi];
-          // winner_0, winner_1, winner_2 altındaki head_img node'ları
           var winIdx = -1;
           if (hn.name === "winner_0" && hn.active) winIdx = 0;
           else if (hn.name === "winner_1" && hn.active) winIdx = 1;
@@ -1757,30 +1817,33 @@
             var winAvatar = _currentWinners[winIdx].avatar || _currentWinners[winIdx].icon || "";
             if (!winAvatar) continue;
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
-            if (headNode) {
-              var hSprite = headNode.getComponent(cc.Sprite);
-              if (hSprite && !headNode._bridgeAvatarPatched) {
-                headNode._bridgeAvatarPatched = true;
-                (function(sprite, hNode, avatarSrc) {
-                  var avatarUrl = avatarSrc + (avatarSrc.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
-                  cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
-                    if (!err && imgAsset && sprite.isValid) {
-                      try {
-                        var tex = new cc.Texture2D();
-                        tex.image = imgAsset;
-                        var sf = new cc.SpriteFrame();
-                        sf.texture = tex;
-                        sf.packable = false;
-                        sprite.spriteFrame = sf;
-                      } catch(e2) {
-                        hNode._bridgeAvatarPatched = false;
-                      }
-                    } else {
-                      hNode._bridgeAvatarPatched = false;
-                    }
-                  });
-                })(hSprite, headNode, winAvatar);
+            if (!headNode) continue;
+            var hSprite = headNode.getComponent(cc.Sprite);
+            if (!hSprite) continue;
+            // Cache'te varsa direkt ata (Cocos temizlese bile her tick'te tekrar atar)
+            var cachedSF = _avatarSFCache[winAvatar];
+            if (cachedSF) {
+              if (hSprite.spriteFrame !== cachedSF) {
+                hSprite.spriteFrame = cachedSF;
               }
+            } else if (!headNode._bridgeAvatarLoading) {
+              // Cache'te yok, henüz yüklenmedi — async yükle
+              headNode._bridgeAvatarLoading = true;
+              (function(sprite, hNode, avatarSrc) {
+                cc.assetManager.loadRemote(avatarSrc, { ext: ".jpg" }, function(err, imgAsset) {
+                  hNode._bridgeAvatarLoading = false;
+                  if (!err && imgAsset) {
+                    _buildAvatarSF(avatarSrc, imgAsset);
+                  } else {
+                    // .png ile tekrar dene
+                    cc.assetManager.loadRemote(avatarSrc, { ext: ".png" }, function(err2, imgAsset2) {
+                      if (!err2 && imgAsset2) {
+                        _buildAvatarSF(avatarSrc, imgAsset2);
+                      }
+                    });
+                  }
+                });
+              })(hSprite, headNode, winAvatar);
             }
           }
         }

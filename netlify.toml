@@ -6,3 +6,22 @@
   for = "/*"
   [headers.values]
     Access-Control-Allow-Origin = "*"
+
+# Avatar proxy — CDN'den avatar resimlerini proxy'le
+[[redirects]]
+  from = "/avatar-proxy/*"
+  to = "https://cdn.apexparty.live/:splat"
+  status = 200
+  force = true
+
+# Cocos JS dosyaları
+[[redirects]]
+  from = "/game/fe-game-cocos-js-hm/*"
+  to = "/cocos-js/:splat"
+  status = 200
+
+# Game asset yolu
+[[redirects]]
+  from = "/game/*"
+  to = "/:splat"
+  status = 200
