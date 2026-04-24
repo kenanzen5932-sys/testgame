@@ -62,9 +62,32 @@
       if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
         window.flutter_inappwebview.callHandler("onCoinsChanged", { coins: coins });
       }
-      // postMessage fallback
       if (window.parent && window.parent.postMessage) {
         window.parent.postMessage(JSON.stringify({ type: "coins_update", coins: coins }), "*");
+      }
+    } catch (e) {}
+  }
+
+  // Flutter'a oyunu kapat sinyali gönder
+  function notifyFlutterClose() {
+    try {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler("onGameClose", {});
+      }
+      if (window.parent && window.parent.postMessage) {
+        window.parent.postMessage(JSON.stringify({ type: "game_close" }), "*");
+      }
+    } catch (e) {}
+  }
+
+  // Flutter'a coins sayfasına git sinyali gönder
+  function notifyFlutterOpenCoinsPage() {
+    try {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler("onOpenCoinsPage", {});
+      }
+      if (window.parent && window.parent.postMessage) {
+        window.parent.postMessage(JSON.stringify({ type: "open_coins_page" }), "*");
       }
     } catch (e) {}
   }
@@ -402,14 +425,14 @@
     "getRoomId": function() { refreshUserFromFlutter(); return ROOM_ID; },
     "getAppRequestHost": SUPABASE_URL,
     "closeLoadingPage": "",
-    "closePage": "",
-    "showRechargeDialog": "",
+    "closePage": function() { notifyFlutterClose(); return ""; },
+    "showRechargeDialog": function() { notifyFlutterOpenCoinsPage(); return ""; },
     "jumpToTarget": "",
     "speakerOperation": "",
     "micOperation": "",
     "isNativeAsset": "false",
     "event_webview_success": "",
-    "popUpBottomRecharge": "",
+    "popUpBottomRecharge": function() { notifyFlutterOpenCoinsPage(); return ""; },
     "enterRoom": ""
   };
 
@@ -436,10 +459,12 @@
     "getUserInfo": function() { return wrapBridgeResponse(getUserInfoData()); },
     "getDeviceInfo": wrapBridgeResponse({ deviceId: "flutter_device", os: "web", osVersion: "android", appVersion: "9.9.9", packageName: "com.greedy.niva", channel: "flutter" }),
     "closeLoadingPage": "",
+    "closePage": function() { notifyFlutterClose(); return ""; },
     "getNetworkState": wrapBridgeResponse("1"),
     "getLanguage": wrapBridgeResponse("TR"),
     "getStatusBarHeight": wrapBridgeResponse("0"),
-    "showRechargeDialog": "",
+    "showRechargeDialog": function() { notifyFlutterOpenCoinsPage(); return ""; },
+    "popUpBottomRecharge": function() { notifyFlutterOpenCoinsPage(); return ""; },
     "jumpToTarget": "",
     "speakerOperation": "",
     "micOperation": "",
@@ -782,6 +807,7 @@
             }
             topWinners.sort(function (a, b) { return b.award - a.award; });
             topWinners = topWinners.slice(0, 3);
+            sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
             notifyFlutterCoins(_userCoins);
 
             // state=3 gönder (sonuç)
@@ -960,6 +986,8 @@
       if (userWinType === 2 && userAward > 0) {
         localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
       }
+      // Oyun UI'daki coin göstergesini güncelle
+      sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
       notifyFlutterCoins(_userCoins);
 
       sendRTMToGame("greedy_baby_state", {
@@ -999,6 +1027,13 @@
 
     var betFoodId = betDataArr[0].foodId || 0;
     var betAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || 100;
+
+    // Yetersiz bakiye kontrolü
+    if (_userCoins < betAmount) {
+      console.warn("%c[BRIDGE] Yetersiz bakiye! coins=" + _userCoins + " bet=" + betAmount, "color: red;");
+      notifyFlutterOpenCoinsPage();
+      return;
+    }
 
     // Önce local olarak düş (instant feedback)
     _userCoins -= betAmount;
