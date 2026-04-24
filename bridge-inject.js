@@ -57,6 +57,7 @@
   var _userBets = {}; // { foodId: totalBet } bu round için
   var _socket = null;
   var _gameLoopTimer = null;
+  var _todayWin = 0; // Bugünkü toplam kazanç
 
   // Çarpan tablosu
   var MULTIPLIERS = [5, 45, 5, 25, 5, 15, 10, 5];
@@ -790,7 +791,7 @@
       rank: 0,
       lotteryTime: 5,
       lotteryResult: history,
-      todayWin: 0,
+      todayWin: _todayWin,
       winFoodId: -1,
       serverTime: Date.now(),
     });
@@ -862,6 +863,9 @@
               }
             }
 
+            // Bugünkü kazancı güncelle
+            if (userAward > 0) _todayWin += userAward;
+
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
             if (userWinType === 2 && userAward > 0) {
@@ -885,12 +889,12 @@
                 award: userAward,
                 winType: userWinType,
                 resultShowTime: RESULT_SHOW_TIME,
-                todayWin: Math.floor(Math.random() * 5000),
+                todayWin: _todayWin,
                 winUser: topWinners,
               },
               lotteryResult: _lotteryHistory.slice(0, 20),
               delayShowResultTime: 0,
-              todayWin: 0,
+              todayWin: _todayWin,
               diamond: _userCoins,
               serverTime: Date.now(),
             });
@@ -1060,6 +1064,9 @@
         }
       }
 
+      // Bugünkü kazancı güncelle
+      if (userAward > 0) _todayWin += userAward;
+
       var localTopWinners = [];
       // Kullanıcı kazandıysa winner listesinde göster
       if (userWinType === 2 && userAward > 0) {
@@ -1081,12 +1088,12 @@
           award: userAward,
           winType: userWinType,
           resultShowTime: SYNC_RESULT_TIME,
-          todayWin: 0,
+          todayWin: _todayWin,
           winUser: localTopWinners,
         },
         lotteryResult: _lotteryHistory.slice(0, 20),
         delayShowResultTime: 0,
-        todayWin: 0,
+        todayWin: _todayWin,
         diamond: _userCoins,
         serverTime: Date.now(),
       });
@@ -1290,6 +1297,7 @@
   var _nodesDumped = false;
   var _chipLabelBlackColor = null;
   var _chipBgPinkColor = null;
+  var _whiteSF = null;
   function patchCocosLabels() {
     try {
       var cc = window.cc;
@@ -1399,7 +1407,30 @@
       if (cc.Color && cc.Sprite) {
         if (!_chipLabelBlackColor) {
           _chipLabelBlackColor = new cc.Color(0, 0, 0, 255);
-          _chipBgPinkColor = new cc.Color(255, 80, 200, 255);
+          _chipBgPinkColor = new cc.Color(255, 105, 180, 255);
+          // Beyaz 4x4 texture oluştur (pembe tint için)
+          try {
+            var cvs = document.createElement("canvas");
+            cvs.width = 4; cvs.height = 4;
+            var ctx2d = cvs.getContext("2d");
+            ctx2d.fillStyle = "#ffffff";
+            ctx2d.fillRect(0, 0, 4, 4);
+            cvs.toBlob(function(blob) {
+              if (!blob) return;
+              var blobUrl = URL.createObjectURL(blob);
+              cc.assetManager.loadRemote(blobUrl, { ext: ".png" }, function(err, imgAsset) {
+                if (!err && imgAsset) {
+                  try {
+                    var t2d = new cc.Texture2D();
+                    t2d.image = imgAsset;
+                    _whiteSF = new cc.SpriteFrame();
+                    _whiteSF.texture = t2d;
+                    console.log("[BRIDGE] White SpriteFrame hazır (pembe chip BG)");
+                  } catch(ex) {}
+                }
+              });
+            }, "image/png");
+          } catch(ex2) {}
         }
         for (var ci = 0; ci < allNodes.length; ci++) {
           var nd2 = allNodes[ci];
@@ -1409,10 +1440,29 @@
               chipLbl.color = _chipLabelBlackColor;
             }
           }
-          if (nd2.name === "you_chip") {
+          if (nd2.name === "you_chip" && nd2.active) {
             var chipSprite = nd2.getComponent(cc.Sprite);
             if (chipSprite) {
+              // Beyaz texture + pembe tint = pembe arka plan
+              if (_whiteSF && chipSprite.spriteFrame !== _whiteSF) {
+                chipSprite.spriteFrame = _whiteSF;
+                chipSprite.type = 0; // SIMPLE
+                chipSprite.sizeMode = 0; // CUSTOM
+              }
               chipSprite.color = _chipBgPinkColor;
+            }
+            // layout içindeki ekstra yazıyı gizle (sadece you_chip_label ve ikon kalsın)
+            var layoutNode = nd2.getChildByName && nd2.getChildByName("layout");
+            if (layoutNode && layoutNode.children) {
+              for (var li = 0; li < layoutNode.children.length; li++) {
+                var lChild = layoutNode.children[li];
+                if (lChild.name !== "you_chip_label") {
+                  var lLabel = lChild.getComponent(cc.Label);
+                  if (lLabel) {
+                    lChild.active = false;
+                  }
+                }
+              }
             }
           }
         }
