@@ -335,7 +335,7 @@
       avatar: proxyAvatarUrl(data.avatar || ""),
       joinedAt: data.joinedAt || Date.now()
     };
-    console.log("%c[BRIDGE] Oyuncu katıldı: " + data.nickname + " (toplam: " + (Object.keys(_players).length + 1) + ")", "color: lime;");
+    console.log("%c[BRIDGE] Oyuncu katıldı: " + data.nickname + " avatar=" + (_players[data.userId].avatar ? _players[data.userId].avatar.substring(0, 60) : "EMPTY") + " (toplam: " + (Object.keys(_players).length + 1) + ")", "color: lime;");
     // Yeni oyuncuya mevcut durumu bildir (sadece master)
     if (_isMaster && _currentRoundId) {
       sendPieSocket("round:state", {
@@ -356,7 +356,7 @@
     // Diğer oyuncunun bahsini kaydet
     if (!_allBets[data.userId]) _allBets[data.userId] = {};
     _allBets[data.userId][data.foodId] = (_allBets[data.userId][data.foodId] || 0) + data.amount;
-    console.log("%c[BRIDGE] " + (data.nickname || "?") + " bahis yaptı: food=" + data.foodId + " +" + data.amount, "color: #00BCD4;");
+    console.log("%c[BRIDGE] " + (data.nickname || "?") + " bahis yaptı: food=" + data.foodId + " +" + data.amount + " avatar=" + (_players[data.userId].avatar ? _players[data.userId].avatar.substring(0, 60) : "EMPTY"), "color: #00BCD4;");
     // Toplam bahisleri hesapla ve Cocos'a gönder
     var totalFoodBets = buildTotalFoodBets();
     sendRTMToGame("greedy_baby_sync_area_state", {
@@ -1198,8 +1198,8 @@
       if (_allBets.hasOwnProperty(uid) && _allBets[uid][winFoodId] && _allBets[uid][winFoodId] > 0) {
         var pAward = _allBets[uid][winFoodId] * multiple;
         var pInfo = _players[uid] || {};
-        var pAvatar = pInfo.avatar || "";
-        // pAvatar zaten doğrudan kullanılır, cache-bust ekleme (cache key uyuşmazlığına neden olur)
+        var pAvatar = proxyAvatarUrl(pInfo.avatar || "");
+        console.log("%c[BRIDGE] buildWinner: uid=" + uid + " name=" + (pInfo.nickname || "?") + " avatar=" + (pAvatar ? pAvatar.substring(0, 80) : "EMPTY"), "color: #FF5722;");
         winners.push({
           name: pInfo.nickname || "Oyuncu",
           icon: pAvatar, avatar: pAvatar,
@@ -1218,8 +1218,10 @@
   // Avatar'ları önceden yükle ve SpriteFrame cache'ine koy
   function preloadWinnerAvatars() {
     if (typeof cc === "undefined" || !cc.assetManager || !cc.Texture2D || !cc.SpriteFrame) return;
+    console.log("%c[BRIDGE] preloadWinnerAvatars: " + _currentWinners.length + " kazanan", "color: #9C27B0;");
     for (var wi = 0; wi < _currentWinners.length; wi++) {
-      var url = _currentWinners[wi].avatar || _currentWinners[wi].icon || "";
+      var url = proxyAvatarUrl(_currentWinners[wi].avatar || _currentWinners[wi].icon || "");
+      console.log("%c[BRIDGE] preload[" + wi + "]: url=" + (url ? url.substring(0, 80) : "EMPTY") + " cached=" + (!!_avatarSFCache[url]), "color: #9C27B0;");
       if (!url || _avatarSFCache[url]) continue;
       (function(avatarUrl) {
         // ext olarak .jpg dene, başarısız olursa .png dene
@@ -1404,6 +1406,13 @@
         // Geçmiş kaydı ekle
         try { addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins); } catch(eBR) { console.error("[BRIDGE] addBetRecord hata:", eBR); }
 
+        // Debug: oyuncu ve bahis durumu
+        console.log("%c[BRIDGE] Settle DEBUG: _players=" + JSON.stringify(Object.keys(_players)) + " _allBets keys=" + JSON.stringify(Object.keys(_allBets)), "color: #FF9800;");
+        for (var dbgUid in _players) {
+          if (_players.hasOwnProperty(dbgUid)) {
+            console.log("%c[BRIDGE] Player[" + dbgUid.substring(0,8) + "]: name=" + (_players[dbgUid].nickname || "?") + " avatar=" + (_players[dbgUid].avatar ? _players[dbgUid].avatar.substring(0,80) : "EMPTY"), "color: #FF9800;");
+          }
+        }
         // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
         var localTopWinners = buildAllWinners(winFoodId, multiple);
         _currentWinners = localTopWinners;
@@ -1833,7 +1842,7 @@
           else if (hn.name === "winner_1" && hn.active) winIdx = 1;
           else if (hn.name === "winner_2" && hn.active) winIdx = 2;
           if (winIdx >= 0 && winIdx < _currentWinners.length) {
-            var winAvatar = _currentWinners[winIdx].avatar || _currentWinners[winIdx].icon || "";
+            var winAvatar = proxyAvatarUrl(_currentWinners[winIdx].avatar || _currentWinners[winIdx].icon || "");
             if (!winAvatar) continue;
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (!headNode) continue;
