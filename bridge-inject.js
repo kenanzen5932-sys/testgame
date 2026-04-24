@@ -57,7 +57,6 @@
   var _userBets = {}; // { foodId: totalBet } bu round için
   var _socket = null;
   var _gameLoopTimer = null;
-  var _piesocketWs = null; // PieSocket WebSocket client
   // Bugünkü toplam kazanç — localStorage'da günlük sakla
   var _todayWinKey = "todayWin_" + new Date().toISOString().slice(0, 10);
   var _todayWin = 0;
@@ -246,8 +245,6 @@
   }
 
   function handleGameState(data) {
-    console.log("%c[BRIDGE] handleGameState: state=" + data.state + " roundId=" + data.roundId, "color: cyan;");
-
     _currentState = data.state;
 
     if (data.roundId) _currentRoundId = data.roundId;
@@ -255,17 +252,11 @@
     if (data.state === 1) {
       // READY — yeni round, bahis süresi başladı
       _userBets = {};
-      // Lottery history güncelle
-      if (data.lotteryResult && Array.isArray(data.lotteryResult)) {
-        _lotteryHistory = data.lotteryResult.slice(0, 20);
-        saveLotteryHistory();
-      }
       sendRTMToGame("greedy_baby_state", {
         roundId: data.roundId,
         state: 1,
         countDown: data.countDown || 15,
         betData: [],
-        lotteryResult: data.lotteryResult || _lotteryHistory.slice(0, 20),
         serverTime: data.serverTime || Date.now(),
       });
     } else if (data.state === 2) {
@@ -281,12 +272,6 @@
       var resultData = data.resultData || {};
       var winFoodId = resultData.foodId;
 
-      // Lottery history güncelle
-      if (data.lotteryResult && Array.isArray(data.lotteryResult)) {
-        _lotteryHistory = data.lotteryResult.slice(0, 20);
-        saveLotteryHistory();
-      }
-
       // Kullanıcının kazanıp kazanmadığını hesapla
       var winType = 0; // NOTBET
       var userAward = 0;
@@ -300,26 +285,6 @@
         }
       }
 
-      // Bugünkü kazancı güncelle
-      if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
-      // Geçmiş kaydı ekle
-      addBetRecord(data.roundId, winFoodId, _userBets, userAward, _userCoins);
-
-      // Broadcast'ten gelen winUser'ı kullan (avatar proxy ile)
-      var winUser = resultData.winUser || [];
-      var proxyWinUser = winUser.map(function(w) {
-        var icon = w.icon || w.avatar || "";
-        if (icon && icon.indexOf("cdn.apexparty.live") !== -1) {
-          icon = icon.replace("https://cdn.apexparty.live/avatars/", "/avatar-proxy/avatars/");
-        }
-        return {
-          name: w.name,
-          icon: icon,
-          avatar: icon,
-          award: w.award
-        };
-      });
-
       sendRTMToGame("greedy_baby_state", {
         roundId: data.roundId,
         state: 3,
@@ -330,18 +295,15 @@
           award: userAward,
           winType: winType,
           resultShowTime: resultData.resultShowTime || 3,
-          todayWin: _todayWin,
-          winUser: proxyWinUser,
+          todayWin: resultData.todayWin || 0,
+          winUser: resultData.winUser || [],
         },
-        lotteryResult: _lotteryHistory.slice(0, 20),
+        lotteryResult: data.lotteryResult || [],
         delayShowResultTime: 0,
-        todayWin: _todayWin,
+        todayWin: resultData.todayWin || 0,
         diamond: _userCoins,
         serverTime: data.serverTime || Date.now(),
       });
-
-      sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
-      notifyFlutterCoins(_userCoins);
 
       // Rank bilgisi
       setTimeout(function () {
@@ -719,11 +681,6 @@
     this._url = url;
     this._isAudio = isAudioUrl(url);
     this._mockResponse = findMockApiResponse(url);
-    // History record API için HostAddress kontrolünü atlayarak mock response döndür
-    if (url.indexOf("/game/greedy-baby-rank/bet-recored") !== -1 && !this._mockResponse) {
-      this._mockResponse = MOCK_API_RESPONSES["/game/greedy-baby-rank/bet-recored"]();
-      console.log("%c[BRIDGE] FORCE MOCK for bet-recored (HostAddress bypass)", "color: lime;");
-    }
     if (url.indexOf("/game/") !== -1 || url.indexOf("mock-api") !== -1) {
       console.log("%c[BRIDGE] XHR.open: " + method + " " + url + " mock=" + !!this._mockResponse, "color: orange;");
     }
@@ -805,9 +762,6 @@
   // ============================================================
   function handleGameInit() {
     getAuthFromFlutter().then(function () {
-      // PieSocket bağlantısını başlat
-      connectPieSocket();
-
       // Bakiye ve durum al
       callGameEngine("get_state").then(function (result) {
         if (!result || !result.success) {
@@ -852,6 +806,9 @@
           });
         }
       });
+
+      // PieSocket bağlan
+      connectPieSocket();
     });
   }
 
@@ -957,12 +914,7 @@
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
             if (userWinType === 2 && userAward > 0) {
-              var avatarUrl = AVATAR || "";
-              // Avatar URL'sini proxy'e çevir (CORS için)
-              if (avatarUrl && avatarUrl.indexOf("cdn.apexparty.live") !== -1) {
-                avatarUrl = avatarUrl.replace("https://cdn.apexparty.live/avatars/", "/avatar-proxy/avatars/");
-              }
-              var avatarCB = avatarUrl ? avatarUrl + (avatarUrl.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+              var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
               topWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: userAward });
             }
             topWinners.sort(function (a, b) { return b.award - a.award; });
@@ -1078,12 +1030,137 @@
   }
 
   function startLocalGameLoop() {
-    console.log("%c[BRIDGE] Local game loop DEVRE DIŞI — PieSocket broadcast kullanılıyor", "color: orange; font-weight: bold;");
-    // syncTick kaldırıldı — PieSocket broadcast'ten state alıyoruz
+    console.log("%c[BRIDGE] Senkron global game loop başlatıldı", "color: orange; font-weight: bold;");
+    _syncLastState = -1;
+    _syncLastRoundId = -1;
+    syncTick(); // İlk tick hemen
+    if (_syncTimer) clearInterval(_syncTimer);
+    _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
   }
 
   function syncTick() {
-    // DEVRE DIŞI — PieSocket broadcast'ten state alıyoruz
+    var info = getSyncRoundInfo();
+    var roundChanged = info.roundId !== _syncLastRoundId;
+    var stateChanged = info.state !== _syncLastState;
+
+    if (!roundChanged && !stateChanged) return; // Değişiklik yok
+
+    _currentRoundId = info.roundId;
+    _currentState = info.state;
+
+    // Yeni round başladı
+    if (roundChanged) {
+      _syncLastRoundId = info.roundId;
+      _userBets = {};
+    }
+
+    if (stateChanged) {
+      _syncLastState = info.state;
+    }
+
+    if (info.state === 1) {
+      // Bahis aşaması — kullanıcının mevcut bahislerini de ekle ({foodId, bet} formatı)
+      var currentBetData = [];
+      for (var bf in _userBets) {
+        if (_userBets.hasOwnProperty(bf) && _userBets[bf] > 0) {
+          currentBetData.push({ foodId: parseInt(bf), bet: _userBets[bf] });
+        }
+      }
+      sendRTMToGame("greedy_baby_state", {
+        roundId: info.roundId,
+        state: 1,
+        countDown: info.countDown,
+        betData: currentBetData,
+        serverTime: Date.now(),
+      });
+    } else if (info.state === 2) {
+      // Çark dönüyor
+      var localAreaBetData = [];
+      for (var fi = 0; fi < 8; fi++) {
+        var ci = (info.roundId + fi) % 5;
+        var cn = ((info.roundId * 3 + fi * 7) % 5) + 1;
+        localAreaBetData.push({
+          foodId: fi,
+          maxUserBet: fi === info.winFoodId ? 1 : 0,
+          chips: [{ index: ci, num: cn }]
+        });
+      }
+      // Kullanıcının bahislerini de ekle ({foodId, bet} formatı)
+      var betDataS2 = [];
+      for (var bf2 in _userBets) {
+        if (_userBets.hasOwnProperty(bf2) && _userBets[bf2] > 0) {
+          betDataS2.push({ foodId: parseInt(bf2), bet: _userBets[bf2] });
+        }
+      }
+      sendRTMToGame("greedy_baby_state", {
+        roundId: info.roundId,
+        state: 2,
+        countDown: info.countDown,
+        lotteryTime: SYNC_LOTTERY_TIME,
+        areaBetData: localAreaBetData,
+        betData: betDataS2,
+        serverTime: Date.now(),
+      });
+    } else if (info.state === 3 && stateChanged) {
+      // Sonuç — sadece state değiştiğinde bir kere çalışır
+      var winFoodId = info.winFoodId;
+      _lotteryHistory.unshift(winFoodId);
+      if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+      saveLotteryHistory();
+
+      var multiple = MULTIPLIERS[winFoodId];
+      var userWinType = 0;
+      var userAward = 0;
+      if (Object.keys(_userBets).length > 0) {
+        if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+          userWinType = 2;
+          userAward = _userBets[winFoodId] * multiple;
+          _userCoins += userAward;
+        } else {
+          userWinType = 1;
+        }
+      }
+
+      // Bugünkü kazancı güncelle
+      if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
+      // Geçmiş kaydı ekle
+      addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins);
+
+      var localTopWinners = [];
+      // Kullanıcı kazandıysa winner listesinde göster
+      if (userWinType === 2 && userAward > 0) {
+        var avatarCB2 = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB2, avatar: avatarCB2, award: userAward });
+      }
+      console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
+      // Oyun UI'daki coin göstergesini güncelle
+      sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
+      notifyFlutterCoins(_userCoins);
+
+      sendRTMToGame("greedy_baby_state", {
+        roundId: info.roundId,
+        state: 3,
+        countDown: info.countDown,
+        resultData: {
+          foodId: winFoodId,
+          multiple: multiple,
+          award: userAward,
+          winType: userWinType,
+          resultShowTime: SYNC_RESULT_TIME,
+          todayWin: _todayWin,
+          winUser: localTopWinners,
+        },
+        lotteryResult: _lotteryHistory.slice(0, 20),
+        delayShowResultTime: 0,
+        todayWin: _todayWin,
+        diamond: _userCoins,
+        serverTime: Date.now(),
+      });
+
+      setTimeout(function () {
+        sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+      }, 500);
+    }
   }
 
   // ============================================================
@@ -1448,9 +1525,11 @@
             if (layoutNode && layoutNode.children) {
               for (var li = 0; li < layoutNode.children.length; li++) {
                 var lChild = layoutNode.children[li];
-                // Sadece you_chip_label hariç diğerlerini gizle
-                if (lChild.name !== "you_chip_label" && lChild.name !== "icon" && lChild.name !== "you_chip_icon") {
-                  lChild.active = false;
+                if (lChild.name !== "you_chip_label") {
+                  var lLabel = lChild.getComponent(cc.Label);
+                  if (lLabel) {
+                    lChild.active = false;
+                  }
                 }
               }
             }
@@ -1466,8 +1545,8 @@
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (headNode) {
               var hSprite = headNode.getComponent(cc.Sprite);
-              // Her turda yeniden patch et (flag kontrolü yok)
-              if (hSprite) {
+              if (hSprite && !headNode._bridgeAvatarPatched) {
+                headNode._bridgeAvatarPatched = true;
                 (function(sprite, hNode) {
                   var avatarUrl = AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
                   cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
@@ -1479,7 +1558,11 @@
                         sf.texture = tex;
                         sf.packable = false;
                         sprite.spriteFrame = sf;
-                      } catch(e2) {}
+                      } catch(e2) {
+                        hNode._bridgeAvatarPatched = false;
+                      }
+                    } else {
+                      hNode._bridgeAvatarPatched = false;
                     }
                   });
                 })(hSprite, headNode);
@@ -1508,7 +1591,7 @@
   setTimeout(function () { clearInterval(netInterval); }, 15000);
 
   // HostAddress'i game yüklendikten sonra globalContext üzerine yaz
-  // System.register wrapper + doğrudan patch (çift güvenlik)
+  // System.register wrapper ile modül export'unu intercept et
   var _origRegister = typeof System !== "undefined" && System.register;
   if (_origRegister) {
     System.register = function(name, deps, declare) {
@@ -1529,17 +1612,6 @@
       return _origRegister.call(System, name, deps, declare);
     };
   }
-
-  // Doğrudan globalContext patch (fallback)
-  setTimeout(function() {
-    try {
-      if (window.game && window.game.globalContext) {
-        window.game.globalContext.HostAddress = "https://mock-api";
-        window.game.globalContext.gameId = window.game.globalContext.gameId || 22;
-        console.log("%c[BRIDGE] GlobalContext.HostAddress patched directly", "color: lime;");
-      }
-    } catch(e) {}
-  }, 2000);
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
