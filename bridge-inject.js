@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.4";
+  var BRIDGE_VERSION = "v2.5";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -48,6 +48,40 @@
       return url.replace("https://cdn.apexparty.live", window.location.origin + "/avatar-proxy");
     }
     return url;
+  }
+
+  // Diğer oyuncuların avatarlarını önceden cache'le (join/bet anında)
+  function ensureAvatarCached(avatarUrl) {
+    if (!avatarUrl || avatarUrl.length < 5) return;
+    if (_avatarSFCache[avatarUrl]) return; // zaten cache'te
+    // HTML Image ile ön-yükle, sonra Cocos SpriteFrame oluştur
+    try {
+      var img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = function() {
+        console.log("%c[BRIDGE] Oyuncu avatarı ön-yüklendi: " + avatarUrl.substring(0, 60) + " (" + img.width + "x" + img.height + ")", "color: #9C27B0;");
+        try {
+          var cc = window.cc;
+          if (cc && cc.assetManager && cc.Texture2D && cc.SpriteFrame) {
+            cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, asset) {
+              if (!err && asset) {
+                _buildAvatarSF(avatarUrl, asset);
+              } else {
+                cc.assetManager.loadRemote(avatarUrl, { ext: ".png" }, function(err2, asset2) {
+                  if (!err2 && asset2) {
+                    _buildAvatarSF(avatarUrl, asset2);
+                  }
+                });
+              }
+            });
+          }
+        } catch(e) {}
+      };
+      img.onerror = function() {
+        console.warn("[BRIDGE] Oyuncu avatarı yükleme başarısız: " + avatarUrl.substring(0, 60));
+      };
+      img.src = avatarUrl;
+    } catch(e) {}
   }
 
   // FLUTTER_USER enjekte edilene kadar bekle
@@ -339,6 +373,8 @@
       joinedAt: data.joinedAt || Date.now()
     };
     console.log("%c[BRIDGE] Oyuncu katıldı: " + data.nickname + " avatar=" + (_players[data.userId].avatar ? _players[data.userId].avatar.substring(0, 60) : "EMPTY") + " (toplam: " + (Object.keys(_players).length + 1) + ")", "color: lime;");
+    // Avatarı hemen ön-yükle
+    ensureAvatarCached(_players[data.userId].avatar);
     // Yeni oyuncuya mevcut durumu bildir (sadece master)
     if (_isMaster && _currentRoundId) {
       sendPieSocket("round:state", {
@@ -355,7 +391,10 @@
     // Oyuncu bilgisini güncelle (player:join kaçırılmış olabilir)
     if (!_players[data.userId]) _players[data.userId] = {};
     if (data.nickname) _players[data.userId].nickname = data.nickname;
-    if (data.avatar) _players[data.userId].avatar = proxyAvatarUrl(data.avatar);
+    if (data.avatar) {
+      _players[data.userId].avatar = proxyAvatarUrl(data.avatar);
+      ensureAvatarCached(_players[data.userId].avatar);
+    }
     // Diğer oyuncunun bahsini kaydet
     if (!_allBets[data.userId]) _allBets[data.userId] = {};
     _allBets[data.userId][data.foodId] = (_allBets[data.userId][data.foodId] || 0) + data.amount;
@@ -450,10 +489,12 @@
     if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
     saveLotteryHistory();
 
-    // Avatar URL'lerini proxy'le (master ham CDN URL'leri gönderebilir)
+    // Avatar URL'lerini proxy'le (master ham CDN URL'leri gönderebilir) + hemen ön-yükle
     for (var wi = 0; wi < topWinners.length; wi++) {
       if (topWinners[wi].icon) topWinners[wi].icon = proxyAvatarUrl(topWinners[wi].icon);
       if (topWinners[wi].avatar) topWinners[wi].avatar = proxyAvatarUrl(topWinners[wi].avatar);
+      ensureAvatarCached(topWinners[wi].avatar || topWinners[wi].icon || "");
+      console.log("%c[BRIDGE] Settle winner[" + wi + "]: " + (topWinners[wi].name || "?") + " avatar=" + (topWinners[wi].avatar || topWinners[wi].icon || "EMPTY").substring(0, 80), "color: #FF5722;");
     }
     _currentWinners = topWinners;
     preloadWinnerAvatars();
@@ -1753,6 +1794,7 @@
   var _rankHidden = false;
   var _rechargeBtnPatched = false;
   var _nodesDumped = false;
+  var _winnerNodesDumped = false;
   var _chipLabelBlackColor = null;
   var _chipBgPinkColor = null;
   var _whiteSF = null;
@@ -1937,16 +1979,46 @@
       }
       // Avatar force-patch: Sprite boşsa cache'ten veya doğrudan yükle
       if (_currentWinners.length > 0 && typeof cc !== "undefined" && cc.Sprite) {
+        // Debug: winner node isimlerini bir kez dumpla
+        if (!_winnerNodesDumped) {
+          var winnerNames = [];
+          for (var di = 0; di < allNodes.length; di++) {
+            var dn = allNodes[di];
+            if (dn.name && dn.active !== false) {
+              var dnl = dn.name.toLowerCase();
+              if (dnl.indexOf("winner") !== -1 || dnl.indexOf("win_") !== -1 ||
+                  dnl.indexOf("rank") !== -1 || dnl.indexOf("result") !== -1 ||
+                  dnl.indexOf("head") !== -1 || dnl.indexOf("avatar") !== -1 ||
+                  dnl.indexOf("icon") !== -1 || dnl.indexOf("item") !== -1) {
+                winnerNames.push(dn.name + (dn.parent ? "←" + dn.parent.name : ""));
+              }
+            }
+          }
+          if (winnerNames.length > 0) {
+            console.log("%c[BRIDGE] WINNER/HEAD node isimleri: " + winnerNames.join(", "), "color: #FF5722; font-weight: bold;");
+            _winnerNodesDumped = true;
+          }
+        }
+
         for (var hi = 0; hi < allNodes.length; hi++) {
           var hn = allNodes[hi];
           var winIdx = -1;
-          if (hn.name === "winner_0" && hn.active) winIdx = 0;
-          else if (hn.name === "winner_1" && hn.active) winIdx = 1;
-          else if (hn.name === "winner_2" && hn.active) winIdx = 2;
+          // Geniş eşleme: winner_0, winnerItem_0, win_item_0, item_0 vs.
+          if (hn.active) {
+            var hnl = (hn.name || "").toLowerCase();
+            if (hnl === "winner_0" || hnl === "winneritem_0" || hnl === "win_item_0" || hnl === "rankitem_0" || hnl === "resultitem_0" || hnl === "rank_item_0") winIdx = 0;
+            else if (hnl === "winner_1" || hnl === "winneritem_1" || hnl === "win_item_1" || hnl === "rankitem_1" || hnl === "resultitem_1" || hnl === "rank_item_1") winIdx = 1;
+            else if (hnl === "winner_2" || hnl === "winneritem_2" || hnl === "win_item_2" || hnl === "rankitem_2" || hnl === "resultitem_2" || hnl === "rank_item_2") winIdx = 2;
+          }
           if (winIdx >= 0 && winIdx < _currentWinners.length) {
             var winAvatar = proxyAvatarUrl(_currentWinners[winIdx].avatar || _currentWinners[winIdx].icon || "");
             if (!winAvatar) continue;
-            var headNode = hn.getChildByName && hn.getChildByName("head_img");
+            // head_img veya benzer child node ara
+            var headNode = hn.getChildByName && (
+              hn.getChildByName("head_img") || hn.getChildByName("headImg") ||
+              hn.getChildByName("head") || hn.getChildByName("icon") ||
+              hn.getChildByName("avatar") || hn.getChildByName("img")
+            );
             if (!headNode) continue;
             try {
               var hSprite = headNode.getComponent(cc.Sprite);
@@ -1958,11 +2030,11 @@
                 var cachedSF = _avatarSFCache[winAvatar];
                 if (cachedSF) {
                   hSprite.spriteFrame = cachedSF;
-                  console.log("%c[BRIDGE] Avatar cache'ten atandı: winner_" + winIdx, "color: #4CAF50;");
+                  console.log("%c[BRIDGE] Avatar cache'ten atandı: winner_" + winIdx + " node=" + hn.name, "color: #4CAF50;");
                 } else if (!headNode._bridgeAvatarLoading) {
                   // Cache'te yok, async yükle
                   headNode._bridgeAvatarLoading = true;
-                  console.log("%c[BRIDGE] Avatar yükleniyor: winner_" + winIdx + " url=" + winAvatar.substring(0, 60), "color: #E91E63;");
+                  console.log("%c[BRIDGE] Avatar yükleniyor: winner_" + winIdx + " node=" + hn.name + " url=" + winAvatar.substring(0, 60), "color: #E91E63;");
                   (function(sprite, hNode, avatarSrc, wIdx) {
                     cc.assetManager.loadRemote(avatarSrc, { ext: ".png" }, function(err, imgAsset) {
                       hNode._bridgeAvatarLoading = false;
