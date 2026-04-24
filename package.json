@@ -1,0 +1,12 @@
+{
+  "name": "fe-game-mock",
+  "version": "1.0.0",
+  "description": "Mock server for GreedyBaby game (backend-free local run)",
+  "scripts": {
+    "start": "node mock-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}

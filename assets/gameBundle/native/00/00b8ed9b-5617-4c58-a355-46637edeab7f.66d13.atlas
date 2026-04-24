@@ -1,0 +1,34 @@
+
+loading.png
+size: 161,48
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+caomei
+  rotate: false
+  xy: 99, 2
+  size: 43, 44
+  orig: 45, 45
+  offset: 1, 1
+  index: -1
+mangguo
+  rotate: true
+  xy: 51, 2
+  size: 44, 46
+  orig: 46, 47
+  offset: 1, 1
+  index: -1
+ningmeng
+  rotate: true
+  xy: 2, 2
+  size: 44, 47
+  orig: 46, 48
+  offset: 1, 1
+  index: -1
+yinying
+  rotate: true
+  xy: 144, 4
+  size: 42, 15
+  orig: 44, 17
+  offset: 1, 1
+  index: -1

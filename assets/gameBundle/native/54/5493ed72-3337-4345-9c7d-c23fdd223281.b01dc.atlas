@@ -1,0 +1,83 @@
+
+skeleton.png
+size: 831,589
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+yanhua_00003
+  rotate: false
+  xy: 0, 394
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00009
+  rotate: false
+  xy: 0, 197
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00012
+  rotate: false
+  xy: 212, 394
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00013
+  rotate: false
+  xy: 0, 0
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00016
+  rotate: false
+  xy: 212, 197
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00020
+  rotate: false
+  xy: 424, 394
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00027
+  rotate: false
+  xy: 212, 0
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00029
+  rotate: false
+  xy: 424, 197
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00032
+  rotate: true
+  xy: 636, 379
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00036
+  rotate: false
+  xy: 424, 0
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1
+yanhua_00043
+  rotate: true
+  xy: 636, 167
+  size: 210, 195
+  orig: 210, 195
+  offset: 0, 0
+  index: -1

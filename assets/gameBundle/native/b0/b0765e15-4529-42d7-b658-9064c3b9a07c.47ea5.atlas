@@ -1,0 +1,41 @@
+
+icon_paojinbi.png
+size: 360,230
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+bling
+  rotate: false
+  xy: 216, 28
+  size: 84, 86
+  orig: 96, 98
+  offset: 6, 6
+  index: -1
+coin_slide
+  rotate: false
+  xy: 330, 116
+  size: 21, 112
+  orig: 21, 112
+  offset: 0, 0
+  index: -1
+coin_slide_ban
+  rotate: false
+  xy: 302, 2
+  size: 56, 112
+  orig: 56, 112
+  offset: 0, 0
+  index: -1
+coin_up
+  rotate: false
+  xy: 216, 116
+  size: 112, 112
+  orig: 112, 112
+  offset: 0, 0
+  index: -1
+light_yuan
+  rotate: true
+  xy: 2, 2
+  size: 226, 212
+  orig: 240, 240
+  offset: 7, 14
+  index: -1

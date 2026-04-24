@@ -1,0 +1,62 @@
+
+icon_daiji.png
+size: 635,261
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+1
+  rotate: false
+  xy: 566, 192
+  size: 67, 67
+  orig: 72, 74
+  offset: 3, 4
+  index: -1
+bling
+  rotate: false
+  xy: 566, 129
+  size: 61, 61
+  orig: 81, 81
+  offset: 10, 10
+  index: -1
+coins
+  rotate: false
+  xy: 526, 30
+  size: 73, 79
+  orig: 73, 79
+  offset: 0, 0
+  index: -1
+icon
+  rotate: true
+  xy: 444, 28
+  size: 81, 80
+  orig: 81, 84
+  offset: 0, 0
+  index: -1
+jiangbei
+  rotate: true
+  xy: 272, 109
+  size: 150, 149
+  orig: 150, 149
+  offset: 0, 0
+  index: -1
+light_1
+  rotate: true
+  xy: 2, 2
+  size: 257, 268
+  orig: 300, 300
+  offset: 20, 14
+  index: -1
+light_2
+  rotate: true
+  xy: 423, 111
+  size: 148, 141
+  orig: 150, 145
+  offset: 2, 2
+  index: -1
+saoguang
+  rotate: true
+  xy: 272, 3
+  size: 104, 170
+  orig: 112, 179
+  offset: 4, 5
+  index: -1

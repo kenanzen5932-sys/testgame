@@ -1,0 +1,279 @@
+
+bx_all.png
+size: 1081,1034
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+bg_light
+  rotate: false
+  xy: 2, 682
+  size: 351, 350
+  orig: 375, 390
+  offset: 16, 20
+  index: -1
+coins1
+  rotate: false
+  xy: 638, 84
+  size: 101, 101
+  orig: 130, 130
+  offset: 15, 14
+  index: -1
+coins10
+  rotate: false
+  xy: 941, 698
+  size: 101, 102
+  orig: 131, 131
+  offset: 15, 14
+  index: -1
+coins11
+  rotate: false
+  xy: 853, 248
+  size: 81, 102
+  orig: 111, 129
+  offset: 15, 13
+  index: -1
+coins12
+  rotate: false
+  xy: 936, 248
+  size: 69, 102
+  orig: 102, 129
+  offset: 17, 14
+  index: -1
+coins13
+  rotate: true
+  xy: 846, 88
+  size: 56, 102
+  orig: 81, 132
+  offset: 13, 16
+  index: -1
+coins14
+  rotate: false
+  xy: 1007, 197
+  size: 64, 93
+  orig: 96, 121
+  offset: 16, 14
+  index: -1
+coins15
+  rotate: false
+  xy: 834, 2
+  size: 84, 84
+  orig: 109, 105
+  offset: 13, 10
+  index: -1
+coins16
+  rotate: true
+  xy: 1000, 943
+  size: 89, 79
+  orig: 120, 100
+  offset: 16, 11
+  index: -1
+coins17
+  rotate: false
+  xy: 741, 2
+  size: 91, 84
+  orig: 121, 100
+  offset: 13, 8
+  index: -1
+coins18
+  rotate: false
+  xy: 981, 393
+  size: 96, 82
+  orig: 125, 93
+  offset: 15, 5
+  index: -1
+coins19
+  rotate: false
+  xy: 867, 352
+  size: 103, 89
+  orig: 125, 102
+  offset: 13, 6
+  index: -1
+coins2
+  rotate: false
+  xy: 853, 146
+  size: 82, 100
+  orig: 110, 129
+  offset: 14, 14
+  index: -1
+coins20
+  rotate: false
+  xy: 741, 88
+  size: 103, 97
+  orig: 125, 115
+  offset: 12, 9
+  index: -1
+coins3
+  rotate: false
+  xy: 1007, 292
+  size: 65, 99
+  orig: 100, 128
+  offset: 17, 14
+  index: -1
+coins4
+  rotate: true
+  xy: 981, 534
+  size: 57, 98
+  orig: 86, 126
+  offset: 15, 14
+  index: -1
+coins5
+  rotate: true
+  xy: 981, 477
+  size: 55, 98
+  orig: 79, 123
+  offset: 12, 12
+  index: -1
+coins6
+  rotate: false
+  xy: 950, 45
+  size: 57, 99
+  orig: 85, 126
+  offset: 14, 13
+  index: -1
+coins7
+  rotate: false
+  xy: 937, 146
+  size: 67, 100
+  orig: 93, 128
+  offset: 13, 14
+  index: -1
+coins8
+  rotate: true
+  xy: 638, 4
+  size: 78, 101
+  orig: 105, 130
+  offset: 14, 14
+  index: -1
+coins9
+  rotate: false
+  xy: 981, 593
+  size: 98, 103
+  orig: 124, 131
+  offset: 14, 14
+  index: -1
+fsg2
+  rotate: false
+  xy: 882, 914
+  size: 116, 118
+  orig: 119, 122
+  offset: 1, 2
+  index: -1
+gq
+  rotate: false
+  xy: 695, 665
+  size: 244, 244
+  orig: 246, 246
+  offset: 1, 1
+  index: -1
+guangdian1
+  rotate: false
+  xy: 975, 2
+  size: 41, 41
+  orig: 45, 45
+  offset: 2, 2
+  index: -1
+guanghuan1
+  rotate: false
+  xy: 619, 187
+  size: 232, 232
+  orig: 232, 232
+  offset: 0, 0
+  index: -1
+guangqiu
+  rotate: false
+  xy: 325, 388
+  size: 292, 292
+  orig: 310, 310
+  offset: 9, 9
+  index: -1
+julongguang
+  rotate: false
+  xy: 619, 421
+  size: 246, 242
+  orig: 252, 253
+  offset: 1, 4
+  index: -1
+kk_hong
+  rotate: false
+  xy: 355, 911
+  size: 525, 121
+  orig: 525, 121
+  offset: 0, 0
+  index: -1
+light1
+  rotate: false
+  xy: 2, 353
+  size: 321, 327
+  orig: 373, 362
+  offset: 26, 24
+  index: -1
+light2
+  rotate: true
+  xy: 867, 443
+  size: 220, 112
+  orig: 220, 112
+  offset: 0, 0
+  index: -1
+light_sheguang
+  rotate: false
+  xy: 398, 9
+  size: 238, 125
+  orig: 244, 131
+  offset: 4, 5
+  index: -1
+light_sheguang2
+  rotate: true
+  xy: 398, 136
+  size: 250, 218
+  orig: 256, 221
+  offset: 1, 2
+  index: -1
+light_sheguang_big
+  rotate: true
+  xy: 270, 6
+  size: 345, 126
+  orig: 353, 133
+  offset: 4, 4
+  index: -1
+lv5_box
+  rotate: true
+  xy: 2, 25
+  size: 326, 266
+  orig: 326, 271
+  offset: 0, 5
+  index: -1
+lv5_top1
+  rotate: false
+  xy: 355, 699
+  size: 338, 210
+  orig: 339, 211
+  offset: 0, 1
+  index: -1
+mask
+  rotate: false
+  xy: 2, 3
+  size: 20, 20
+  orig: 20, 20
+  offset: 0, 0
+  index: -1
+star
+  rotate: false
+  xy: 1006, 154
+  size: 40, 41
+  orig: 49, 52
+  offset: 5, 6
+  index: -1
+xx1
+  rotate: true
+  xy: 941, 802
+  size: 110, 103
+  orig: 112, 104
+  offset: 1, 1
+  index: -1
+xx2
+  rotate: false
+  xy: 920, 2
+  size: 53, 41
+  orig: 54, 48
+  offset: 1, 2
+  index: -1
