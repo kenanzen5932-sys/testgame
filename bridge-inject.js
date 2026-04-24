@@ -56,6 +56,19 @@
   // Çarpan tablosu
   var MULTIPLIERS = [5, 45, 5, 25, 5, 15, 10, 5];
 
+  // Flutter'a coin güncellemesi gönder
+  function notifyFlutterCoins(coins) {
+    try {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler("onCoinsChanged", { coins: coins });
+      }
+      // postMessage fallback
+      if (window.parent && window.parent.postMessage) {
+        window.parent.postMessage(JSON.stringify({ type: "coins_update", coins: coins }), "*");
+      }
+    } catch (e) {}
+  }
+
   // ============================================================
   // 2) FLUTTER BRIDGE — Token alma (InAppWebView)
   // ============================================================
@@ -293,15 +306,36 @@
   window.Branch = "prod";
   window.Version = "1.0.17";
 
-  // Console error spam'i azalt
+  // Console error/log spam'i azalt (audio + bilinen hatalar)
+  function isAudioSpam(msg) {
+    if (typeof msg !== "string") return false;
+    return msg.indexOf("load audio failed") !== -1 ||
+      msg.indexOf("playRemoteEffect_error") !== -1 ||
+      msg.indexOf("preloadRemoteAudio_error") !== -1 ||
+      msg.indexOf("failed to load Web Audio") !== -1 ||
+      msg.indexOf("DOMException") !== -1;
+  }
   var _origError = console.error;
   console.error = function () {
     var msg = arguments[0];
     if (typeof msg === "string") {
       if (msg.indexOf("3300") !== -1 || msg.indexOf("4930") !== -1 || msg.indexOf("ERR_SSL") !== -1) return;
       if (msg.indexOf("resetChipNum_error") !== -1 || msg.indexOf("loadImageByHttp_error") !== -1) return;
+      if (isAudioSpam(msg)) return;
     }
     _origError.apply(console, arguments);
+  };
+  var _origLog = console.log;
+  console.log = function () {
+    var msg = arguments[0];
+    if (isAudioSpam(msg)) return;
+    _origLog.apply(console, arguments);
+  };
+  var _origWarn = console.warn;
+  console.warn = function () {
+    var msg = arguments[0];
+    if (isAudioSpam(msg)) return;
+    _origWarn.apply(console, arguments);
   };
 
   // ============================================================
@@ -470,6 +504,17 @@
     }
     return null;
   }
+
+  // AudioContext.decodeAudioData patch — DOMException'ı sustur
+  try {
+    var _origDecode = AudioContext.prototype.decodeAudioData;
+    AudioContext.prototype.decodeAudioData = function (buf, successCb, errorCb) {
+      return _origDecode.call(this, buf, successCb, function (err) {
+        // Sessiz WAV decode hatalarını yut
+        if (errorCb) errorCb(err);
+      }).catch(function () {});
+    };
+  } catch (e) {}
 
   // Minimal sessiz WAV — ArrayBuffer olarak (atob gerektirmez)
   var _silentAudioBuf = null;
@@ -643,7 +688,7 @@
     }
     if (!forcedCountDown && state === 1 && countDown === 0) countDown = 15;
 
-    var history = (stateResult && stateResult.lotteryResult) || [];
+    var history = (stateResult && stateResult.lotteryResult) || _lotteryHistory || [];
 
     sendRTMToGame("greedy_baby_init", {
       roundId: round ? round.id : 1000,
@@ -661,7 +706,10 @@
     });
   }
 
+  // lotteryHistory: localStorage'dan yükle (sayfa yeniden açıldığında korunsun)
   var _lotteryHistory = [];
+  try { var _savedLH = localStorage.getItem("lotteryHistory"); if (_savedLH) _lotteryHistory = JSON.parse(_savedLH); } catch(e) {}
+  function saveLotteryHistory() { try { localStorage.setItem("lotteryHistory", JSON.stringify(_lotteryHistory)); } catch(e) {} }
 
   // Round ilerlemesi: bahis süresi → lottery → settle → next round
   function scheduleRoundProgression(roundId, betDuration) {
@@ -706,6 +754,7 @@
 
             _lotteryHistory.unshift(winFoodId);
             if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+            saveLotteryHistory();
 
             var multiple = sRes.multiplier || MULTIPLIERS[winFoodId];
             var RESULT_SHOW_TIME = 3;
@@ -723,20 +772,14 @@
               }
             }
 
-            // Top 3 kazananlar oluştur
+            // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
-            if (topWinners.length === 0) {
-              var fakeNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Ali", "Zeynep"];
-              var shuffled = fakeNames.sort(function () { return Math.random() - 0.5; });
-              for (var wi = 0; wi < 3; wi++) {
-                topWinners.push({ name: shuffled[wi], icon: "", award: Math.floor(Math.random() * 50000) + 1000 });
-              }
-            }
             if (userWinType === 2 && userAward > 0) {
-              topWinners.push({ name: NICKNAME || "Oyuncu", icon: "", award: userAward });
+              topWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
             }
             topWinners.sort(function (a, b) { return b.award - a.award; });
             topWinners = topWinners.slice(0, 3);
+            notifyFlutterCoins(_userCoins);
 
             // state=3 gönder (sonuç)
             sendRTMToGame("greedy_baby_state", {
@@ -752,7 +795,7 @@
                 todayWin: Math.floor(Math.random() * 5000),
                 winUser: topWinners,
               },
-              lotteryResult: _lotteryHistory.slice(0, 10),
+              lotteryResult: _lotteryHistory.slice(0, 20),
               delayShowResultTime: 0,
               todayWin: 0,
               diamond: _userCoins,
@@ -843,6 +886,7 @@
         // state=3 (sonuç)
         _lotteryHistory.unshift(winFoodId);
         if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+        saveLotteryHistory();
 
         var multiple = MULTIPLIERS[winFoodId];
         var userWinType = 0;
@@ -857,18 +901,12 @@
           }
         }
 
-        // Top 3 kazananlar (local mod)
-        var localFakeNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Ali", "Zeynep"];
-        var localShuffled = localFakeNames.sort(function () { return Math.random() - 0.5; });
+        // Kazananlar — sadece gerçek kullanıcı
         var localTopWinners = [];
-        for (var wi = 0; wi < 3; wi++) {
-          localTopWinners.push({ name: localShuffled[wi], icon: "", award: Math.floor(Math.random() * 50000) + 1000 });
-        }
         if (userWinType === 2 && userAward > 0) {
-          localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: "", award: userAward });
+          localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
         }
-        localTopWinners.sort(function (a, b) { return b.award - a.award; });
-        localTopWinners = localTopWinners.slice(0, 3);
+        notifyFlutterCoins(_userCoins);
 
         sendRTMToGame("greedy_baby_state", {
           roundId: _localRoundId,
@@ -883,9 +921,9 @@
             todayWin: Math.floor(Math.random() * 5000),
             winUser: localTopWinners,
           },
-          lotteryResult: _lotteryHistory.slice(0, 10),
+          lotteryResult: _lotteryHistory.slice(0, 20),
           delayShowResultTime: 0,
-          todayWin: Math.floor(Math.random() * 5000),
+          todayWin: 0,
           diamond: _userCoins,
           serverTime: Date.now(),
         });
@@ -920,6 +958,7 @@
     var localBetId = _betIdCounter;
 
     console.log("%c[BRIDGE] Bahis: food=" + betFoodId + " amount=" + betAmount + " coins=" + _userCoins, "color: cyan;");
+    notifyFlutterCoins(_userCoins);
 
     // Oyuna hemen onay gönder
     sendRTMToGame("greedy_baby_bet", {
@@ -940,6 +979,7 @@
         // Gerçek bakiyeyle senkronize et
         _userCoins = result.remaining_coins;
         sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
+        notifyFlutterCoins(_userCoins);
       } else {
         console.warn("[BRIDGE] Bahis backend'de reddedildi:", result);
       }
