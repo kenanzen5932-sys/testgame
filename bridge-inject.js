@@ -343,6 +343,10 @@
 
   function onPlayerBet(data) {
     if (!data.userId || data.userId === USER_ID) return; // kendi bahsimi zaten lokal işledim
+    // Oyuncu bilgisini güncelle (player:join kaçırılmış olabilir)
+    if (!_players[data.userId]) _players[data.userId] = {};
+    if (data.nickname) _players[data.userId].nickname = data.nickname;
+    if (data.avatar) _players[data.userId].avatar = data.avatar;
     // Diğer oyuncunun bahsini kaydet
     if (!_allBets[data.userId]) _allBets[data.userId] = {};
     _allBets[data.userId][data.foodId] = (_allBets[data.userId][data.foodId] || 0) + data.amount;
@@ -1317,12 +1321,8 @@
       // Geçmiş kaydı ekle
       addBetRecord(info.roundId, winFoodId, _userBets, userAward, _userCoins);
 
-      var localTopWinners = [];
-      // Kullanıcı kazandıysa winner listesinde göster
-      if (userWinType === 2 && userAward > 0) {
-        var avatarCB2 = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
-        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB2, avatar: avatarCB2, award: userAward });
-      }
+      // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
+      var localTopWinners = buildAllWinners(winFoodId, multiple);
       console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
       sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
