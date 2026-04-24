@@ -1,6 +1,5 @@
 node_modules/
 .DS_Store
 Thumbs.db
-mock-inject.js
 mock-server.js
 package-lock.json

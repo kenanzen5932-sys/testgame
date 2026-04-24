@@ -281,12 +281,17 @@
   // ============================================================
 
   // Mock userAgent (oyun mobil kontrol yapıyor)
-  Object.defineProperty(navigator, "userAgent", {
-    get: function () {
-      return "Mozilla/5.0 (Linux; Android 12; Mock) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36";
-    },
-    configurable: true,
-  });
+  var FAKE_UA = "Mozilla/5.0 (Linux; Android 12; Mock) AppleWebKit/537.36 (KHTML, like Gecko) appName/mock";
+  try {
+    Object.defineProperty(navigator, "userAgent", { get: function () { return FAKE_UA; }, configurable: true });
+  } catch (e1) {
+    try { navigator.__defineGetter__("userAgent", function () { return FAKE_UA; }); } catch (e2) {}
+  }
+
+  // Oyun window.Env'e bakıyor
+  window.Env = "prod";
+  window.Branch = "prod";
+  window.Version = "1.0.17";
 
   // Console error spam'i azalt
   var _origError = console.error;
@@ -294,55 +299,224 @@
     var msg = arguments[0];
     if (typeof msg === "string") {
       if (msg.indexOf("3300") !== -1 || msg.indexOf("4930") !== -1 || msg.indexOf("ERR_SSL") !== -1) return;
+      if (msg.indexOf("resetChipNum_error") !== -1 || msg.indexOf("loadImageByHttp_error") !== -1) return;
     }
     _origError.apply(console, arguments);
   };
 
-  // (localhost patch kaldırıldı — Vercel HTTPS kullanıyor)
+  // ============================================================
+  // BRIDGE RESPONSE FORMAT (base64 encoded JSON wrapper — native bridge formatı)
+  // ============================================================
+  function wrapBridgeResponse(data) {
+    var wrapper = { params: (typeof data === "string") ? data : JSON.stringify(data) };
+    var json = JSON.stringify(wrapper);
+    try {
+      return window.btoa(unescape(encodeURIComponent(json)));
+    } catch (e) {
+      return window.btoa(json);
+    }
+  }
+
+  // ============================================================
+  // getUserInfo dataları (her çağrıda güncel)
+  // ============================================================
+  function getUserInfoData() {
+    refreshUserFromFlutter();
+    return {
+      userId: USER_ID,
+      token: AUTH_TOKEN,
+      packageName: "com.greedy.niva",
+      uiLang: "TR",
+      appVersion: "9.9.9",
+      deviceId: "flutter_device",
+      nickname: NICKNAME,
+      avatar: AVATAR,
+      diamond: _userCoins,
+      coin: _userCoins
+    };
+  }
+
+  // localStorage'a da yaz (store mekanizması buradan okuyor)
+  try {
+    localStorage.setItem("userInfo", JSON.stringify(getUserInfoData()));
+  } catch (e) {}
+  // FLUTTER_USER gelince güncelle
+  var _lsUpdateInterval = setInterval(function () {
+    if (refreshUserFromFlutter()) {
+      try { localStorage.setItem("userInfo", JSON.stringify(getUserInfoData())); } catch (e) {}
+      clearInterval(_lsUpdateInterval);
+    }
+  }, 500);
+  setTimeout(function () { clearInterval(_lsUpdateInterval); }, 15000);
+
+  // ============================================================
+  // FUN_METHODS (window.fun.xxx çağrıları için)
+  // ============================================================
+  var FUN_METHODS = {
+    "getUserInfo": function() { return getUserInfoData(); },
+    "getUserInfoNew": function() { return getUserInfoData(); },
+    "getDeviceInfo": { deviceId: "flutter_device", os: "web", osVersion: "android", appVersion: "9.9.9", packageName: "com.greedy.niva", channel: "flutter" },
+    "getNetworkState": "1",
+    "getLanguage": "TR",
+    "getStatusBarHeight": "0",
+    "getAppVersion": { version: "9.9.9", versionCode: 999 },
+    "getAppVersionCode": "999",
+    "checkUpdate": { needUpdate: false },
+    "getVersion": "9.9.9",
+    "getToken": function() { refreshUserFromFlutter(); return AUTH_TOKEN; },
+    "getFunId": function() { refreshUserFromFlutter(); return USER_ID; },
+    "getRoomId": function() { refreshUserFromFlutter(); return ROOM_ID; },
+    "getAppRequestHost": SUPABASE_URL,
+    "closeLoadingPage": "",
+    "closePage": "",
+    "showRechargeDialog": "",
+    "jumpToTarget": "",
+    "speakerOperation": "",
+    "micOperation": "",
+    "isNativeAsset": "false",
+    "event_webview_success": "",
+    "popUpBottomRecharge": "",
+    "enterRoom": ""
+  };
 
   // fun.* bridge mock (Cocos oyunu bunu bekliyor)
   window.fun = window.fun || {};
-
-  // getUserInfo — Flutter'dan gelen bilgiler
-  var FUN_METHODS = {
-    getUserInfo: function () {
-      refreshUserFromFlutter(); // her çağrıda güncelle
-      return {
-        userId: USER_ID,
-        token: AUTH_TOKEN,
-        packageName: "com.greedy.niva",
-        uiLang: "TR",
-        appVersion: "9.9.9",
-        clientType: "h5",
-        nickname: NICKNAME,
-        avatar: AVATAR,
-        diamond: _userCoins,
-      };
-    },
-    getDeviceInfo: function () {
-      return { platform: "android", brand: "mock", model: "Mock", os: "Android 12" };
-    },
-    getAppRequestHost: function () {
-      return { live: SUPABASE_URL, report: SUPABASE_URL };
-    },
+  Object.keys(FUN_METHODS).forEach(function (key) {
+    window.fun[key] = function (params) {
+      console.log("%c[BRIDGE FUN] " + key, "color: #ff9800;", params || "");
+      var data = FUN_METHODS[key];
+      var result = typeof data === "function" ? data(params) : data;
+      if (!result && result !== "") return "";
+      return wrapBridgeResponse(result);
+    };
+  });
+  window.fun.nativeToH5 = function () {};
+  window.fun.h5ToNative = function (data) {
+    console.log("%c[BRIDGE FUN] h5ToNative", "color: #ff9800;", data);
   };
 
-  // fun.* proxy
-  var funHandler = {
-    get: function (target, key) {
-      if (typeof target[key] === "function") return target[key];
-      return function (params) {
-        console.log("%c[BRIDGE FUN] " + key, "color: #ff9800;", params || "");
-        var fn = FUN_METHODS[key];
-        if (fn) {
-          var result = typeof fn === "function" ? fn(params) : fn;
-          return JSON.stringify({ code: 0, data: JSON.stringify(result) });
-        }
-        return "";
-      };
-    },
+  // ============================================================
+  // WINDOW.PROMPT OVERRIDE (oyun native bridge'i prompt() ile kullanıyor)
+  // ============================================================
+  var PROMPT_RESPONSES = {
+    "getUserInfo": function() { return wrapBridgeResponse(getUserInfoData()); },
+    "getDeviceInfo": wrapBridgeResponse({ deviceId: "flutter_device", os: "web", osVersion: "android", appVersion: "9.9.9", packageName: "com.greedy.niva", channel: "flutter" }),
+    "closeLoadingPage": "",
+    "getNetworkState": wrapBridgeResponse("1"),
+    "getLanguage": wrapBridgeResponse("TR"),
+    "getStatusBarHeight": wrapBridgeResponse("0"),
+    "showRechargeDialog": "",
+    "jumpToTarget": "",
+    "speakerOperation": "",
+    "micOperation": "",
+    "getAppVersion": wrapBridgeResponse({ version: "9.9.9", versionCode: 999 }),
+    "checkUpdate": wrapBridgeResponse({ needUpdate: false }),
+    "getVersion": wrapBridgeResponse("9.9.9")
   };
-  window.fun = new Proxy(window.fun, funHandler);
+
+  var originalPrompt = window.prompt;
+  window.prompt = function (method, params) {
+    if (method === "requestMsg") {
+      console.log("%c[BRIDGE RTM ←] requestMsg", "color: orange;", params);
+      if (window.fun && window.fun.requestMsg) {
+        window.fun.requestMsg(params);
+      }
+      return "";
+    }
+    if (PROMPT_RESPONSES.hasOwnProperty(method)) {
+      var resp = PROMPT_RESPONSES[method];
+      console.log("%c[BRIDGE PROMPT] " + method, "color: #ff9800;", params || "");
+      return typeof resp === "function" ? resp() : (resp || "");
+    }
+    console.warn("[BRIDGE PROMPT] Unknown:", method, params || "");
+    return wrapBridgeResponse({});
+  };
+
+  // URL parametrelerine uid ve token ekle (globalContext.userInfo fallback)
+  if (!window.location.search.includes("uid=")) {
+    var injectParams = "uid=" + encodeURIComponent(USER_ID || "flutter_user") +
+      "&token=" + encodeURIComponent(AUTH_TOKEN || "flutter_token") +
+      "&roomId=" + encodeURIComponent(ROOM_ID || "0") +
+      "&betVersion=1";
+    var newUrl = window.location.pathname + "?" + injectParams + window.location.hash;
+    window.history.replaceState(null, "", newUrl);
+  }
+
+  window.game = window.game || {};
+  window.game.netEventManger = window.game.netEventManger || {};
+  if (typeof window.webkit === "undefined") {
+    window.webkit = { messageHandlers: {} };
+  }
+  window.ReportEvent = window.ReportEvent || function () {};
+
+  // API base URL set et (oyun bunu kullanıyor)
+  window.REQUEST_API_URL = SUPABASE_URL;
+
+  // ============================================================
+  // API MOCK RESPONSES (oyun XHR ile sorgulama yapıyor)
+  // ============================================================
+  var MOCK_API_RESPONSES = {
+    "/activity/probability-game/banner": { code: 200, message: "success", data: { banners: [] } },
+    "/game/greedy-baby/gm": { code: 200, message: "success", data: {} },
+    "/game/greedy-baby-rank/rank-v1": { code: 200, message: "success", data: { userType: 1, myRank: 0, myBet: 0, rankList: [] } },
+    "/game/greedy-baby-rank/bet-recored": { code: 200, message: "success", data: { total: 0, list: [] } },
+    "/game/operation/operation-search": { code: 200, message: "success", data: {} },
+    "/v2/client-event/report": { code: 200, message: "ok" }
+  };
+
+  function findMockApiResponse(url) {
+    for (var pattern in MOCK_API_RESPONSES) {
+      if (url.indexOf(pattern) !== -1) return MOCK_API_RESPONSES[pattern];
+    }
+    return null;
+  }
+
+  // XHR interceptor
+  var OriginalXHR = window.XMLHttpRequest;
+  function BridgeXHR() {
+    var realXHR = new OriginalXHR();
+    var self = this;
+    this._url = ""; this._mockResponse = null; this._realXHR = realXHR;
+    this.responseType = ""; this.timeout = 0; this.status = 0; this.response = null; this.readyState = 0;
+    this.onload = null; this.onerror = null; this.ontimeout = null; this.onreadystatechange = null; this.onprogress = null;
+  }
+  BridgeXHR.prototype.open = function (method, url, async) {
+    this._url = url;
+    this._mockResponse = findMockApiResponse(url);
+    if (!this._mockResponse) this._realXHR.open(method, url, async !== false);
+  };
+  BridgeXHR.prototype.setRequestHeader = function (k, v) { if (!this._mockResponse) try { this._realXHR.setRequestHeader(k, v); } catch(e){} };
+  BridgeXHR.prototype.addEventListener = function (t, fn) { if (!this._mockResponse) this._realXHR.addEventListener(t, fn); };
+  BridgeXHR.prototype.getResponseHeader = function (n) { return this._mockResponse ? null : this._realXHR.getResponseHeader(n); };
+  BridgeXHR.prototype.send = function (body) {
+    var self = this;
+    if (this._mockResponse) {
+      setTimeout(function () {
+        self.status = 200; self.readyState = 4; self.response = self._mockResponse;
+        if (self.onload) self.onload();
+        if (self.onreadystatechange) self.onreadystatechange();
+      }, 50);
+    } else {
+      var xr = this._realXHR;
+      xr.responseType = this.responseType; xr.timeout = this.timeout;
+      xr.onload = function () { self.status = xr.status; self.response = xr.response; self.readyState = xr.readyState; if (self.onload) self.onload(); };
+      xr.onerror = function (e) { if (self.onerror) self.onerror(e); };
+      xr.ontimeout = function (e) { if (self.ontimeout) self.ontimeout(e); };
+      xr.onreadystatechange = function () { self.readyState = xr.readyState; self.status = xr.status; self.response = xr.response; if (self.onreadystatechange) self.onreadystatechange(); };
+      xr.send(body);
+    }
+  };
+  window.XMLHttpRequest = BridgeXHR;
+
+  // Fetch interceptor
+  var originalFetch = window.fetch;
+  window.fetch = function (url, options) {
+    var mockResp = findMockApiResponse(typeof url === "string" ? url : url.url || "");
+    if (mockResp) {
+      return Promise.resolve(new Response(JSON.stringify(mockResp), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    return originalFetch.apply(window, arguments);
+  };
 
   // requestMsg — oyunun RTM mesajları
   window.fun.requestMsg = function (paramsStr) {
