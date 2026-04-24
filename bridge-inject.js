@@ -960,12 +960,20 @@
     }
 
     if (info.state === 1) {
-      // Bahis aşaması
+      // Bahis aşaması — kullanıcının mevcut bahislerini de ekle
+      var currentBetData = [];
+      for (var bf in _userBets) {
+        if (_userBets.hasOwnProperty(bf) && _userBets[bf] > 0) {
+          currentBetData.push({ foodId: parseInt(bf), bets: [_userBets[bf]] });
+        }
+      }
       sendRTMToGame("greedy_baby_state", {
         roundId: info.roundId,
         state: 1,
         countDown: info.countDown,
-        betData: [],
+        betData: currentBetData,
+        selfBetData: currentBetData,
+        mySelfBetData: currentBetData,
         serverTime: Date.now(),
       });
     } else if (info.state === 2) {
@@ -980,12 +988,21 @@
           chips: [{ index: ci, num: cn }]
         });
       }
+      // Kullanıcının bahislerini de ekle
+      var selfBetDataS2 = [];
+      for (var bf2 in _userBets) {
+        if (_userBets.hasOwnProperty(bf2) && _userBets[bf2] > 0) {
+          selfBetDataS2.push({ foodId: parseInt(bf2), bets: [_userBets[bf2]] });
+        }
+      }
       sendRTMToGame("greedy_baby_state", {
         roundId: info.roundId,
         state: 2,
         countDown: info.countDown,
         lotteryTime: SYNC_LOTTERY_TIME,
         areaBetData: localAreaBetData,
+        selfBetData: selfBetDataS2,
+        mySelfBetData: selfBetDataS2,
         serverTime: Date.now(),
       });
     } else if (info.state === 3 && stateChanged) {
@@ -1070,6 +1087,14 @@
     console.log("%c[BRIDGE] Bahis: food=" + betFoodId + " amount=" + betAmount + " coins=" + _userCoins, "color: cyan;");
     notifyFlutterCoins(_userCoins);
 
+    // selfBetData: kullanıcının tüm bahisleri (yemek başına toplam)
+    var selfBetData = [];
+    for (var fid in _userBets) {
+      if (_userBets.hasOwnProperty(fid) && _userBets[fid] > 0) {
+        selfBetData.push({ foodId: parseInt(fid), bets: [_userBets[fid]] });
+      }
+    }
+
     // Oyuna hemen onay gönder
     sendRTMToGame("greedy_baby_bet", {
       code: 0,
@@ -1077,6 +1102,8 @@
       diamond: _userCoins,
       betingId: localBetId,
       betData: betDataArr,
+      selfBetData: selfBetData,
+      mySelfBetData: selfBetData,
     });
 
     // Edge Function'a da gönder (arka planda)
