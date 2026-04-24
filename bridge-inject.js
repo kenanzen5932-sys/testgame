@@ -1805,8 +1805,8 @@
           }
         }
       }
-      // Avatar force-patch: cached SpriteFrame'leri winner head_img sprite'larına ata
-      if (cc.Sprite && cc.assetManager && _currentWinners.length > 0) {
+      // Avatar force-patch: Cocos'un kendi SpriteAdapter'ını kullanarak avatar yükle
+      if (_currentWinners.length > 0) {
         for (var hi = 0; hi < allNodes.length; hi++) {
           var hn = allNodes[hi];
           var winIdx = -1;
@@ -1818,33 +1818,41 @@
             if (!winAvatar) continue;
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (!headNode) continue;
-            var hSprite = headNode.getComponent(cc.Sprite);
-            if (!hSprite) continue;
-            // Cache'te varsa direkt ata (Cocos temizlese bile her tick'te tekrar atar)
-            var cachedSF = _avatarSFCache[winAvatar];
-            if (cachedSF) {
-              if (hSprite.spriteFrame !== cachedSF) {
-                hSprite.spriteFrame = cachedSF;
+            // Oyunun kendi SpriteAdapter bileşenini bul ve loadImageByHttps çağır
+            try {
+              var sa = null;
+              var _comps = headNode._components || [];
+              for (var ci = 0; ci < _comps.length; ci++) {
+                if (_comps[ci] && typeof _comps[ci].loadImageByHttps === "function") { sa = _comps[ci]; break; }
               }
-            } else if (!headNode._bridgeAvatarLoading) {
-              // Cache'te yok, henüz yüklenmedi — async yükle
-              headNode._bridgeAvatarLoading = true;
-              (function(sprite, hNode, avatarSrc) {
-                cc.assetManager.loadRemote(avatarSrc, { ext: ".jpg" }, function(err, imgAsset) {
-                  hNode._bridgeAvatarLoading = false;
-                  if (!err && imgAsset) {
-                    _buildAvatarSF(avatarSrc, imgAsset);
-                  } else {
-                    // .png ile tekrar dene
-                    cc.assetManager.loadRemote(avatarSrc, { ext: ".png" }, function(err2, imgAsset2) {
-                      if (!err2 && imgAsset2) {
-                        _buildAvatarSF(avatarSrc, imgAsset2);
+              if (sa) {
+                // Sadece URL farklıysa yükle (duplicate engelle)
+                if (sa._url !== winAvatar) {
+                  sa.loadImageByHttps(winAvatar);
+                  console.log("%c[BRIDGE] Avatar SpriteAdapter load: winner_" + winIdx + " url=" + winAvatar.substring(0, 60), "color: #E91E63;");
+                }
+              } else {
+                // SpriteAdapter yoksa fallback: direkt assetManager ile yükle
+                var hSprite = headNode.getComponent(cc.Sprite);
+                if (hSprite && cc.assetManager && headNode._bridgeAvatarUrl !== winAvatar) {
+                  headNode._bridgeAvatarUrl = winAvatar;
+                  (function(sprite, hNode, avatarSrc) {
+                    cc.assetManager.loadRemote(avatarSrc, { ext: ".png" }, function(err, imgAsset) {
+                      if (!err && imgAsset && sprite.isValid) {
+                        try {
+                          var sf = new cc.SpriteFrame();
+                          sf.texture = (imgAsset instanceof cc.Texture2D) ? imgAsset : (function() { var t = new cc.Texture2D(); t.image = imgAsset; return t; })();
+                          sf.packable = false;
+                          sprite.spriteFrame = sf;
+                        } catch(e2) { hNode._bridgeAvatarUrl = ""; }
+                      } else {
+                        hNode._bridgeAvatarUrl = "";
                       }
                     });
-                  }
-                });
-              })(hSprite, headNode, winAvatar);
-            }
+                  })(hSprite, headNode, winAvatar);
+                }
+              }
+            } catch(eAvatar) {}
           }
         }
       }
@@ -1852,6 +1860,32 @@
   }
 
   setInterval(patchCocosLabels, 500);
+
+  // Avatar URL yükleme sonuçlarını logla (cc.assetManager.loadRemote interceptor)
+  var _lrPatched = false;
+  var _lrPatchInterval = setInterval(function() {
+    if (typeof cc !== "undefined" && cc.assetManager && cc.assetManager.loadRemote && !_lrPatched) {
+      _lrPatched = true;
+      var _origLoadRemote = cc.assetManager.loadRemote.bind(cc.assetManager);
+      cc.assetManager.loadRemote = function(url, opts, cb) {
+        if (typeof url === "string" && url.indexOf("avatar-proxy") > -1) {
+          var wrappedCb = function(err, asset) {
+            if (err) {
+              console.error("[BRIDGE] loadRemote FAIL avatar:", url.substring(0, 80), "ext:", opts && opts.ext, "err:", err);
+            } else {
+              console.log("%c[BRIDGE] loadRemote OK avatar: " + url.substring(0, 60) + " type=" + (asset && asset.constructor ? asset.constructor.name : typeof asset), "color: #4CAF50;");
+            }
+            if (cb) cb(err, asset);
+          };
+          return _origLoadRemote(url, opts, wrappedCb);
+        }
+        return _origLoadRemote(url, opts, cb);
+      };
+      console.log("%c[BRIDGE] loadRemote interceptor aktif", "color: lime;");
+      clearInterval(_lrPatchInterval);
+    }
+  }, 300);
+  setTimeout(function() { clearInterval(_lrPatchInterval); }, 15000);
 
   // networkState'i online yap + globalContext patch
   var netInterval = setInterval(function () {
