@@ -620,7 +620,9 @@
     for (var pattern in MOCK_API_RESPONSES) {
       if (url.indexOf(pattern) !== -1) {
         var val = MOCK_API_RESPONSES[pattern];
-        return typeof val === "function" ? val() : val;
+        var result = typeof val === "function" ? val() : val;
+        console.log("%c[BRIDGE] MOCK HIT: " + pattern, "color: cyan;", result);
+        return result;
       }
     }
     return null;
@@ -679,6 +681,9 @@
     this._url = url;
     this._isAudio = isAudioUrl(url);
     this._mockResponse = findMockApiResponse(url);
+    if (url.indexOf("/game/") !== -1 || url.indexOf("mock-api") !== -1) {
+      console.log("%c[BRIDGE] XHR.open: " + method + " " + url + " mock=" + !!this._mockResponse, "color: orange;");
+    }
     if (!this._mockResponse && !this._isAudio) this._realXHR.open(method, url, async !== false);
   };
   BridgeXHR.prototype.setRequestHeader = function (k, v) { if (!this._mockResponse) try { this._realXHR.setRequestHeader(k, v); } catch(e){} };
@@ -946,6 +951,18 @@
 
             // Sonuç gösterim süresi sonra yeni round
             setTimeout(function () {
+              // Avatar patch flag'lerini sıfırla (yeni turda tekrar patch edilsin)
+              try {
+                var scene = cc.director.getScene();
+                if (scene) {
+                  var allN = scene.getComponentsInChildren(cc.UITransform).map(function(c){return c.node});
+                  for (var ri = 0; ri < allN.length; ri++) {
+                    if (allN[ri].name === "head_img" && allN[ri]._bridgeAvatarPatched) {
+                      allN[ri]._bridgeAvatarPatched = false;
+                    }
+                  }
+                }
+              } catch(e3) {}
               callGameEngine("next_round", { round_id: roundId }).then(function (nRes) {
                 if (nRes && nRes.success) {
                   _currentRoundId = nRes.round_id;
@@ -1572,6 +1589,28 @@
     }
   }, 300);
   setTimeout(function () { clearInterval(netInterval); }, 15000);
+
+  // GlobalContext modülünü import edip HostAddress set et (record API için)
+  var _gcPatched = false;
+  var gcInterval = setInterval(function () {
+    if (_gcPatched) return;
+    try {
+      if (typeof System !== "undefined" && System.import) {
+        System.import("chunks:///_virtual/GlobalContext.ts").then(function (mod) {
+          if (mod && mod.globalContext) {
+            var gc = mod.globalContext;
+            if (!gc.HostAddress) {
+              gc.HostAddress = "https://mock-api";
+              console.log("%c[BRIDGE] GlobalContext.HostAddress = https://mock-api", "color: lime;");
+            }
+            if (!gc.gameId) gc.gameId = 22;
+            _gcPatched = true;
+          }
+        }).catch(function () {});
+      }
+    } catch (e) {}
+  }, 500);
+  setTimeout(function () { clearInterval(gcInterval); }, 20000);
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
