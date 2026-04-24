@@ -28,6 +28,18 @@
   var AVATAR = "";
   var _authReady = false;
 
+  // Multiplayer state
+  var _isMaster = false;
+  var _masterUserId = null;
+  var _masterLastHB = 0;
+  var _players = {}; // {userId: {nickname, avatar, joinedAt}}
+  var _allBets = {}; // current round: {userId: {foodId: amount, ...}}
+  var _masterHBInterval = null;
+  var _masterCheckInterval = null;
+  var GLOBAL_CHANNEL = "greedy-niva-global";
+  var MASTER_HB_INTERVAL = 5000; // 5s
+  var MASTER_TIMEOUT = 15000; // 15s
+
   // FLUTTER_USER enjekte edilene kadar bekle
   function refreshUserFromFlutter() {
     var u = window.FLUTTER_USER;
@@ -161,7 +173,7 @@
   // 3) SUPABASE EDGE FUNCTION ÇAĞRISI
   // ============================================================
   function callGameEngine(action, params) {
-    var body = Object.assign({ action: action, room_id: parseInt(ROOM_ID) || 0 }, params || {});
+    var body = Object.assign({ action: action, room_id: 0 }, params || {}); // Global mod: room_id=0
 
     return fetch(EDGE_FUNCTION_URL, {
       method: "POST",
@@ -184,44 +196,51 @@
   }
 
   // ============================================================
-  // 4) PIESOCKET BAĞLANTISI
+  // 4) PIESOCKET BAĞLANTISI (GLOBAL)
   // ============================================================
   function connectPieSocket() {
-    if (!ROOM_ID) {
-      console.warn("[BRIDGE] roomId yok, PieSocket bağlanmadı");
-      return;
-    }
+    var wsUrl = "wss://" + PIESOCKET_CLUSTER + ".piesocket.com/v3/" + GLOBAL_CHANNEL + "?api_key=" + PIESOCKET_API_KEY + "&notify_self=0";
 
-    var channelName = "game-room-" + ROOM_ID;
-    var wsUrl = "wss://" + PIESOCKET_CLUSTER + ".piesocket.com/v3/" + channelName + "?api_key=" + PIESOCKET_API_KEY + "&notify_self=0";
-
-    console.log("%c[BRIDGE] PieSocket bağlanıyor: " + channelName, "color: orange;");
+    console.log("%c[BRIDGE] PieSocket bağlanıyor: " + GLOBAL_CHANNEL, "color: orange;");
 
     _socket = new WebSocket(wsUrl);
 
     _socket.onopen = function () {
       console.log("%c[BRIDGE] PieSocket bağlı ✓", "color: lime; font-weight: bold;");
+      // Odaya katıl
+      sendPieSocket("player:join", {
+        userId: USER_ID,
+        nickname: NICKNAME,
+        avatar: AVATAR,
+        joinedAt: Date.now()
+      });
+      // Master bekle — 3 saniye içinde heartbeat gelmezse master ol
+      setTimeout(function() {
+        if (!_masterUserId) {
+          claimMaster();
+        }
+      }, 3000);
     };
 
     _socket.onmessage = function (evt) {
       try {
         var msg = JSON.parse(evt.data);
-        // PieSocket mesaj formatı: { event, data, sender_id }
         var event = msg.event || "";
         var data = typeof msg.data === "string" ? JSON.parse(msg.data) : msg.data;
-
         if (!event || !data) return;
-
-        console.log("%c[PIESOCKET] " + event, "color: #ff9800;", data);
-
+        if (event !== "master:heartbeat") {
+          console.log("%c[PIESOCKET ←] " + event, "color: #ff9800;", data);
+        }
         handleGameEvent(event, data);
-      } catch (e) {
-        // ignore non-JSON
-      }
+      } catch (e) {}
     };
 
     _socket.onclose = function () {
       console.log("%c[BRIDGE] PieSocket kapandı, 3s sonra tekrar bağlanıyor...", "color: red;");
+      _isMaster = false;
+      _masterUserId = null;
+      if (_masterHBInterval) { clearInterval(_masterHBInterval); _masterHBInterval = null; }
+      if (_masterCheckInterval) { clearInterval(_masterCheckInterval); _masterCheckInterval = null; }
       setTimeout(connectPieSocket, 3000);
     };
 
@@ -230,97 +249,240 @@
     };
   }
 
+  // PieSocket'e mesaj gönder
+  function sendPieSocket(event, data) {
+    if (_socket && _socket.readyState === WebSocket.OPEN) {
+      _socket.send(JSON.stringify({ event: event, data: data }));
+    }
+  }
+
+  // Master ol
+  function claimMaster() {
+    _isMaster = true;
+    _masterUserId = USER_ID;
+    _masterLastHB = Date.now();
+    console.log("%c[BRIDGE] BEN MASTER OLDUM! " + NICKNAME, "color: gold; font-weight: bold; font-size: 16px;");
+    sendPieSocket("master:claim", { userId: USER_ID, nickname: NICKNAME });
+    // Heartbeat başlat
+    if (_masterHBInterval) clearInterval(_masterHBInterval);
+    _masterHBInterval = setInterval(function() {
+      sendPieSocket("master:heartbeat", { userId: USER_ID, ts: Date.now() });
+    }, MASTER_HB_INTERVAL);
+    // Master olarak oyunu başlat
+    startMasterGameLoop();
+  }
+
+  // Master kontrol — heartbeat gelmezse yeni master seç
+  function startMasterCheck() {
+    if (_masterCheckInterval) clearInterval(_masterCheckInterval);
+    _masterCheckInterval = setInterval(function() {
+      if (_isMaster) return; // ben zaten master'ım
+      if (_masterUserId && (Date.now() - _masterLastHB > MASTER_TIMEOUT)) {
+        console.log("%c[BRIDGE] Master timeout! Yeni master seçiliyor...", "color: red; font-weight: bold;");
+        _masterUserId = null;
+        // En düşük userId master olur (deterministik)
+        var playerIds = Object.keys(_players);
+        playerIds.push(USER_ID);
+        playerIds.sort();
+        if (playerIds[0] === USER_ID) {
+          claimMaster();
+        } else {
+          // Başkası master olacak, 3s bekle
+          setTimeout(function() {
+            if (!_masterUserId) claimMaster();
+          }, 3000);
+        }
+      }
+    }, 5000);
+  }
+
   // ============================================================
-  // 5) GAME EVENT HANDLER — PieSocket'ten gelen mesajları Cocos'a ilet
+  // 5) GAME EVENT HANDLER — PieSocket'ten gelen mesajları işle
   // ============================================================
   function handleGameEvent(event, data) {
     switch (event) {
-      case "client-game-state":
-        handleGameState(data);
+      case "player:join":
+        onPlayerJoin(data);
         break;
-      case "client-game-bet":
-        handleOtherPlayerBet(data);
+      case "player:bet":
+        onPlayerBet(data);
+        break;
+      case "master:heartbeat":
+        onMasterHeartbeat(data);
+        break;
+      case "master:claim":
+        onMasterClaim(data);
+        break;
+      case "round:state":
+        onRoundState(data);
+        break;
+      case "round:settle":
+        onRoundSettle(data);
         break;
     }
   }
 
-  function handleGameState(data) {
-    _currentState = data.state;
-
-    if (data.roundId) _currentRoundId = data.roundId;
-
-    if (data.state === 1) {
-      // READY — yeni round, bahis süresi başladı
-      _userBets = {};
-      sendRTMToGame("greedy_baby_state", {
-        roundId: data.roundId,
-        state: 1,
-        countDown: data.countDown || 15,
-        betData: [],
-        serverTime: data.serverTime || Date.now(),
+  function onPlayerJoin(data) {
+    if (!data.userId) return;
+    _players[data.userId] = {
+      nickname: data.nickname || "Oyuncu",
+      avatar: data.avatar || "",
+      joinedAt: data.joinedAt || Date.now()
+    };
+    console.log("%c[BRIDGE] Oyuncu katıldı: " + data.nickname + " (toplam: " + (Object.keys(_players).length + 1) + ")", "color: lime;");
+    // Yeni oyuncuya mevcut durumu bildir (sadece master)
+    if (_isMaster && _currentRoundId) {
+      sendPieSocket("round:state", {
+        roundId: _currentRoundId,
+        state: _currentState,
+        countDown: 10,
+        serverTime: Date.now()
       });
-    } else if (data.state === 2) {
-      // RUNNING — çekiliş animasyonu
-      sendRTMToGame("greedy_baby_state", {
-        roundId: data.roundId,
-        state: 2,
-        countDown: data.countDown || 5,
-        serverTime: data.serverTime || Date.now(),
-      });
-    } else if (data.state === 3) {
-      // SETTLE — sonuçlar
-      var resultData = data.resultData || {};
-      var winFoodId = resultData.foodId;
-
-      // Kullanıcının kazanıp kazanmadığını hesapla
-      var winType = 0; // NOTBET
-      var userAward = 0;
-      if (Object.keys(_userBets).length > 0) {
-        if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
-          winType = 2; // WIN
-          userAward = _userBets[winFoodId] * (resultData.multiple || MULTIPLIERS[winFoodId]);
-          _userCoins += userAward;
-        } else {
-          winType = 1; // LOSE
-        }
-      }
-
-      sendRTMToGame("greedy_baby_state", {
-        roundId: data.roundId,
-        state: 3,
-        countDown: (resultData.resultShowTime || 3) + 2,
-        resultData: {
-          foodId: winFoodId,
-          multiple: resultData.multiple || MULTIPLIERS[winFoodId],
-          award: userAward,
-          winType: winType,
-          resultShowTime: resultData.resultShowTime || 3,
-          todayWin: resultData.todayWin || 0,
-          winUser: resultData.winUser || [],
-        },
-        lotteryResult: data.lotteryResult || [],
-        delayShowResultTime: 0,
-        todayWin: resultData.todayWin || 0,
-        diamond: _userCoins,
-        serverTime: data.serverTime || Date.now(),
-      });
-
-      // Rank bilgisi
-      setTimeout(function () {
-        sendRTMToGame("greedy_baby_rank", {
-          rank: 0,
-          award: userAward,
-        });
-      }, 500);
     }
   }
 
-  function handleOtherPlayerBet(data) {
-    // Diğer oyuncuların bahislerini alan state'e ekle
+  function onPlayerBet(data) {
+    if (!data.userId || data.userId === USER_ID) return; // kendi bahsimi zaten lokal işledim
+    // Diğer oyuncunun bahsini kaydet
+    if (!_allBets[data.userId]) _allBets[data.userId] = {};
+    _allBets[data.userId][data.foodId] = (_allBets[data.userId][data.foodId] || 0) + data.amount;
+    console.log("%c[BRIDGE] " + (data.nickname || "?") + " bahis yaptı: food=" + data.foodId + " +" + data.amount, "color: #00BCD4;");
+    // Toplam bahisleri hesapla ve Cocos'a gönder
+    var totalFoodBets = buildTotalFoodBets();
     sendRTMToGame("greedy_baby_sync_area_state", {
       roundId: _currentRoundId,
-      totalFoodBets: data,
+      areaBetData: totalFoodBets
     });
+  }
+
+  function onMasterHeartbeat(data) {
+    if (!data.userId) return;
+    _masterUserId = data.userId;
+    _masterLastHB = Date.now();
+  }
+
+  function onMasterClaim(data) {
+    if (!data.userId) return;
+    // Eğer ben de master'ım ve diğerinin userId daha düşükse, ben bırakırım
+    if (_isMaster && data.userId < USER_ID) {
+      console.log("%c[BRIDGE] Master'lığı bırakıyorum → " + data.nickname, "color: orange;");
+      _isMaster = false;
+      if (_masterHBInterval) { clearInterval(_masterHBInterval); _masterHBInterval = null; }
+    }
+    if (!_isMaster) {
+      _masterUserId = data.userId;
+      _masterLastHB = Date.now();
+      console.log("%c[BRIDGE] Master: " + (data.nickname || data.userId), "color: gold;");
+    }
+  }
+
+  // Listener: master'dan gelen round state
+  function onRoundState(data) {
+    if (_isMaster) return; // master kendi state'ini zaten biliyor
+    _currentRoundId = data.roundId;
+    _currentState = data.state;
+
+    if (data.state === 1) {
+      _userBets = {};
+      _allBets = {};
+    }
+
+    sendRTMToGame("greedy_baby_state", {
+      roundId: data.roundId,
+      state: data.state,
+      countDown: data.countDown || 15,
+      lotteryTime: data.lotteryTime || 5,
+      areaBetData: data.areaBetData || [],
+      betData: [],
+      serverTime: data.serverTime || Date.now(),
+    });
+  }
+
+  // Listener: master'dan gelen settle sonuçları
+  function onRoundSettle(data) {
+    if (_isMaster) return;
+    var winFoodId = data.foodId;
+    var multiple = data.multiple || MULTIPLIERS[winFoodId];
+    var topWinners = data.winners || [];
+
+    // Kendi kazancımı hesapla
+    var userWinType = 0;
+    var userAward = 0;
+    if (Object.keys(_userBets).length > 0) {
+      if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+        userWinType = 2;
+        userAward = _userBets[winFoodId] * multiple;
+        _userCoins += userAward;
+      } else {
+        userWinType = 1;
+      }
+    }
+
+    if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
+    addBetRecord(data.roundId, winFoodId, _userBets, userAward, _userCoins);
+
+    // Lottery history güncelle
+    _lotteryHistory.unshift(winFoodId);
+    if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
+    saveLotteryHistory();
+
+    console.log("%c[BRIDGE] Settle(listener): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
+    sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
+    notifyFlutterCoins(_userCoins);
+
+    sendRTMToGame("greedy_baby_state", {
+      roundId: data.roundId,
+      state: 3,
+      countDown: 5,
+      resultData: {
+        foodId: winFoodId,
+        multiple: multiple,
+        award: userAward,
+        winType: userWinType,
+        resultShowTime: 3,
+        todayWin: _todayWin,
+        winUser: topWinners,
+      },
+      lotteryResult: _lotteryHistory.slice(0, 20),
+      delayShowResultTime: 0,
+      todayWin: _todayWin,
+      diamond: _userCoins,
+      serverTime: Date.now(),
+    });
+
+    setTimeout(function () {
+      sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
+    }, 500);
+  }
+
+  // Tüm oyuncuların yemek başına toplam bahislerini hesapla
+  function buildTotalFoodBets() {
+    var totals = {};
+    // Kendi bahislerim
+    for (var fid in _userBets) {
+      if (_userBets.hasOwnProperty(fid)) totals[fid] = (totals[fid] || 0) + _userBets[fid];
+    }
+    // Diğer oyuncuların bahisleri
+    for (var uid in _allBets) {
+      if (_allBets.hasOwnProperty(uid)) {
+        for (var fid2 in _allBets[uid]) {
+          if (_allBets[uid].hasOwnProperty(fid2)) totals[fid2] = (totals[fid2] || 0) + _allBets[uid][fid2];
+        }
+      }
+    }
+    // areaBetData formatına çevir
+    var result = [];
+    for (var fi = 0; fi < 8; fi++) {
+      var total = totals[fi] || 0;
+      var chipIdx = Math.min(Math.floor(total / 1000), 4);
+      var chipNum = total > 0 ? Math.max(1, Math.min(Math.ceil(total / 500), 5)) : 0;
+      result.push({
+        foodId: fi,
+        maxUserBet: total > 0 ? 1 : 0,
+        chips: chipNum > 0 ? [{ index: chipIdx, num: chipNum }] : []
+      });
+    }
+    return result;
   }
 
   // ============================================================
@@ -762,53 +924,57 @@
   // ============================================================
   function handleGameInit() {
     getAuthFromFlutter().then(function () {
-      // Bakiye ve durum al
+      // Bakiye al
       callGameEngine("get_state").then(function (result) {
-        if (!result || !result.success) {
-          console.error("[BRIDGE] get_state başarısız, senkron mod:", result);
-          // Senkron mod — zaman tabanlı round bilgisi ile init gönder
-          var syncInfo = getSyncRoundInfo();
-          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
-          startLocalGameLoop();
-          return;
+        if (result && result.success) {
+          _userCoins = result.coins || 0;
         }
-
-        _userCoins = result.coins || 0;
-        var round = result.round;
-
-        if (round && round.state < 4) {
-          // Aktif round var
-          var state = round.state;
-          var countDown = 0;
-          if (round.bet_ends_at) {
-            countDown = Math.max(0, Math.floor((new Date(round.bet_ends_at).getTime() - Date.now()) / 1000));
-          }
-          sendInitToGame(round, result);
-          _currentRoundId = round.id;
-          _currentState = state;
-        } else {
-          // Aktif round yok — başlat
-          console.log("%c[BRIDGE] Aktif round yok, yeni başlatılıyor...", "color: gold;");
-          callGameEngine("start_game").then(function (startRes) {
-            if (startRes && startRes.success) {
-              _currentRoundId = startRes.round_id;
-              _currentState = 1;
-              sendInitToGame({ id: startRes.round_id, state: 1 }, result, startRes.bet_duration || 15);
-              // Bahis süresi sonunda otomatik lottery → settle → next
-              scheduleRoundProgression(startRes.round_id, startRes.bet_duration || 15);
-            } else {
-              // Start da başarısız — senkron loop
-              console.warn("[BRIDGE] start_game başarısız, senkron mod:", startRes);
-              var syncInfo2 = getSyncRoundInfo();
-              sendInitToGame({ id: syncInfo2.roundId, state: syncInfo2.state }, result, syncInfo2.countDown);
-              startLocalGameLoop();
-            }
-          });
-        }
+        // Init mesajını senkron modda gönder (round bilgisi PieSocket'ten gelecek)
+        var syncInfo = getSyncRoundInfo();
+        sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
+        _currentRoundId = syncInfo.roundId;
+        _currentState = syncInfo.state;
       });
 
-      // PieSocket bağlan
+      // PieSocket bağlan — master election otomatik olur
       connectPieSocket();
+      startMasterCheck();
+    });
+  }
+
+  // Master olarak oyun döngüsünü başlat
+  function startMasterGameLoop() {
+    console.log("%c[BRIDGE] Master game loop başlatılıyor...", "color: gold; font-weight: bold;");
+    // Senkron bilgisini al ve EF ile round başlat
+    callGameEngine("start_game").then(function (startRes) {
+      if (startRes && startRes.success) {
+        _currentRoundId = startRes.round_id;
+        _currentState = 1;
+        _userBets = {};
+        _allBets = {};
+        var betDuration = startRes.bet_duration || 15;
+        // Kendi UI'ımı güncelle
+        sendRTMToGame("greedy_baby_state", {
+          roundId: startRes.round_id,
+          state: 1,
+          countDown: betDuration,
+          betData: [],
+          serverTime: Date.now(),
+        });
+        // Listener'lara bildir
+        sendPieSocket("round:state", {
+          roundId: startRes.round_id,
+          state: 1,
+          countDown: betDuration,
+          serverTime: Date.now()
+        });
+        // Round ilerlemesini planla
+        scheduleRoundProgression(startRes.round_id, betDuration);
+      } else {
+        // EF başarısız → senkron fallback
+        console.warn("[BRIDGE] Master: start_game başarısız, senkron mod");
+        startLocalGameLoop();
+      }
     });
   }
 
@@ -845,11 +1011,15 @@
   try { var _savedLH = localStorage.getItem("lotteryHistory"); if (_savedLH) _lotteryHistory = JSON.parse(_savedLH); } catch(e) {}
   function saveLotteryHistory() { try { localStorage.setItem("lotteryHistory", JSON.stringify(_lotteryHistory)); } catch(e) {} }
 
-  // Round ilerlemesi: bahis süresi → lottery → settle → next round
+  // Round ilerlemesi: bahis süresi → lottery → settle → next round (SADECE MASTER)
   function scheduleRoundProgression(roundId, betDuration) {
-    console.log("%c[BRIDGE] Round " + roundId + " | " + betDuration + "s bahis başladı", "color: gold;");
+    if (!_isMaster) return;
+    console.log("%c[BRIDGE] Master: Round " + roundId + " | " + betDuration + "s bahis başladı", "color: gold;");
+
     setTimeout(function () {
-      // Lottery
+      if (!_isMaster) return; // master değilsem dur
+
+      // Lottery çalıştır
       callGameEngine("run_lottery", { round_id: roundId }).then(function (lRes) {
         if (!lRes || !lRes.success) {
           console.warn("[BRIDGE] run_lottery başarısız:", lRes);
@@ -857,32 +1027,28 @@
         }
         var winFoodId = lRes.win_food_id;
         var LOTTERY_TIME = 5;
-        console.log("%c[BRIDGE] Kazanan: " + lRes.win_food_name + " (x" + lRes.multiplier + ")", "color: gold;");
+        var multiple = lRes.multiplier || MULTIPLIERS[winFoodId];
+        console.log("%c[BRIDGE] Kazanan: " + lRes.win_food_name + " (x" + multiple + ")", "color: gold;");
 
-        // areaBetData oluştur (çark görselinde bahis chip'leri)
-        var areaBetData = [];
-        for (var fi = 0; fi < 8; fi++) {
-          var ci = Math.floor(Math.random() * 5);
-          var cn = Math.floor(Math.random() * 5) + 1;
-          areaBetData.push({
-            foodId: fi,
-            maxUserBet: fi === winFoodId ? 1 : 0,
-            chips: [{ index: ci, num: cn }]
-          });
-        }
+        // areaBetData — gerçek bahis toplamlarından oluştur
+        var areaBetData = buildTotalFoodBets();
 
-        // state=2 gönder (çark dönüyor)
+        // state=2 — kendi UI
         sendRTMToGame("greedy_baby_state", {
-          roundId: roundId,
-          state: 2,
-          countDown: LOTTERY_TIME,
-          lotteryTime: LOTTERY_TIME,
-          areaBetData: areaBetData,
+          roundId: roundId, state: 2, countDown: LOTTERY_TIME,
+          lotteryTime: LOTTERY_TIME, areaBetData: areaBetData,
           serverTime: Date.now(),
+        });
+        // state=2 — listener'lara
+        sendPieSocket("round:state", {
+          roundId: roundId, state: 2, countDown: LOTTERY_TIME,
+          lotteryTime: LOTTERY_TIME, areaBetData: areaBetData,
+          serverTime: Date.now()
         });
 
         // Lottery süresi sonra settle
         setTimeout(function () {
+          if (!_isMaster) return;
           callGameEngine("settle", { round_id: roundId, food_id: winFoodId }).then(function (sRes) {
             if (!sRes) return;
 
@@ -890,12 +1056,13 @@
             if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
             saveLotteryHistory();
 
-            var multiple = sRes.multiplier || MULTIPLIERS[winFoodId];
             var RESULT_SHOW_TIME = 3;
 
-            // Kullanıcının kazanıp kazanmadığını hesapla
-            var userWinType = 0;
-            var userAward = 0;
+            // TÜM OYUNCULARIN kazananlarını hesapla
+            var topWinners = buildAllWinners(winFoodId, multiple);
+
+            // Kendi kazancımı hesapla
+            var userWinType = 0; var userAward = 0;
             if (Object.keys(_userBets).length > 0) {
               if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
                 userWinType = 2;
@@ -906,42 +1073,30 @@
               }
             }
 
-            // Bugünkü kazancı güncelle
             if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
-            // Geçmiş kaydı ekle
             addBetRecord(roundId, winFoodId, _userBets, userAward, _userCoins);
 
-            // Top kazananlar — sadece gerçek veriler
-            var topWinners = sRes.top_winners || [];
-            if (userWinType === 2 && userAward > 0) {
-              var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
-              topWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: userAward });
-            }
-            topWinners.sort(function (a, b) { return b.award - a.award; });
-            topWinners = topWinners.slice(0, 3);
-            console.log("%c[BRIDGE] Settle(EF): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + topWinners.length, "color: gold;");
+            console.log("%c[BRIDGE] Settle(master): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
             sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
             notifyFlutterCoins(_userCoins);
 
-            // state=3 gönder (sonuç)
+            // state=3 — kendi UI
             sendRTMToGame("greedy_baby_state", {
-              roundId: roundId,
-              state: 3,
-              countDown: RESULT_SHOW_TIME + 2,
+              roundId: roundId, state: 3, countDown: RESULT_SHOW_TIME + 2,
               resultData: {
-                foodId: winFoodId,
-                multiple: multiple,
-                award: userAward,
-                winType: userWinType,
-                resultShowTime: RESULT_SHOW_TIME,
-                todayWin: _todayWin,
-                winUser: topWinners,
+                foodId: winFoodId, multiple: multiple, award: userAward,
+                winType: userWinType, resultShowTime: RESULT_SHOW_TIME,
+                todayWin: _todayWin, winUser: topWinners,
               },
               lotteryResult: _lotteryHistory.slice(0, 20),
-              delayShowResultTime: 0,
-              todayWin: _todayWin,
-              diamond: _userCoins,
-              serverTime: Date.now(),
+              delayShowResultTime: 0, todayWin: _todayWin,
+              diamond: _userCoins, serverTime: Date.now(),
+            });
+
+            // Settle — listener'lara (herkese aynı winner listesini gönder)
+            sendPieSocket("round:settle", {
+              roundId: roundId, foodId: winFoodId, multiple: multiple,
+              winners: topWinners, lotteryHistory: _lotteryHistory.slice(0, 20)
             });
 
             // Rank bilgisi
@@ -949,32 +1104,34 @@
               sendRTMToGame("greedy_baby_rank", { rank: 0, award: userAward });
             }, 500);
 
-            // Sonuç gösterim süresi sonra yeni round
+            // Yeni round
             setTimeout(function () {
-              // Avatar patch flag'lerini sıfırla (yeni turda tekrar patch edilsin)
+              if (!_isMaster) return;
+              // Avatar patch flag'lerini sıfırla
               try {
                 var scene = cc.director.getScene();
                 if (scene) {
                   var allN = scene.getComponentsInChildren(cc.UITransform).map(function(c){return c.node});
                   for (var ri = 0; ri < allN.length; ri++) {
-                    if (allN[ri].name === "head_img" && allN[ri]._bridgeAvatarPatched) {
-                      allN[ri]._bridgeAvatarPatched = false;
-                    }
+                    if (allN[ri].name === "head_img" && allN[ri]._bridgeAvatarPatched) allN[ri]._bridgeAvatarPatched = false;
                   }
                 }
               } catch(e3) {}
+
               callGameEngine("next_round", { round_id: roundId }).then(function (nRes) {
                 if (nRes && nRes.success) {
                   _currentRoundId = nRes.round_id;
                   _currentState = 1;
                   _userBets = {};
+                  _allBets = {};
 
                   sendRTMToGame("greedy_baby_state", {
-                    roundId: nRes.round_id,
-                    state: 1,
-                    countDown: 15,
-                    betData: [],
-                    serverTime: Date.now(),
+                    roundId: nRes.round_id, state: 1, countDown: 15,
+                    betData: [], serverTime: Date.now(),
+                  });
+                  sendPieSocket("round:state", {
+                    roundId: nRes.round_id, state: 1, countDown: 15,
+                    serverTime: Date.now()
                   });
 
                   scheduleRoundProgression(nRes.round_id, 15);
@@ -985,6 +1142,33 @@
         }, LOTTERY_TIME * 1000);
       });
     }, betDuration * 1000);
+  }
+
+  // Tüm oyuncuların kazananlarını hesapla (master)
+  function buildAllWinners(winFoodId, multiple) {
+    var winners = [];
+    // Master'ın kendi bahisleri
+    if (_userBets[winFoodId] && _userBets[winFoodId] > 0) {
+      var myAward = _userBets[winFoodId] * multiple;
+      var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+      winners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: myAward });
+    }
+    // Diğer oyuncuların bahisleri
+    for (var uid in _allBets) {
+      if (_allBets.hasOwnProperty(uid) && _allBets[uid][winFoodId] && _allBets[uid][winFoodId] > 0) {
+        var pAward = _allBets[uid][winFoodId] * multiple;
+        var pInfo = _players[uid] || {};
+        var pAvatar = pInfo.avatar || "";
+        if (pAvatar) pAvatar = pAvatar + (pAvatar.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
+        winners.push({
+          name: pInfo.nickname || "Oyuncu",
+          icon: pAvatar, avatar: pAvatar,
+          award: pAward
+        });
+      }
+    }
+    winners.sort(function (a, b) { return b.award - a.award; });
+    return winners.slice(0, 3);
   }
 
   // ============================================================
@@ -1190,6 +1374,15 @@
 
     console.log("%c[BRIDGE] Bahis: food=" + betFoodId + " amount=" + betAmount + " coins=" + _userCoins, "color: cyan;");
     notifyFlutterCoins(_userCoins);
+
+    // PieSocket'e broadcast — diğer oyuncular görsün
+    sendPieSocket("player:bet", {
+      userId: USER_ID,
+      nickname: NICKNAME,
+      avatar: AVATAR,
+      foodId: betFoodId,
+      amount: betAmount
+    });
 
     // betData: kullanıcının yemek başına toplam bahisleri — oyun {foodId, bet} formatı bekliyor
     var responseBetData = [];
@@ -1615,6 +1808,7 @@
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
-  console.log("  Room:", ROOM_ID);
+  console.log("  Kanal:", GLOBAL_CHANNEL);
   console.log("  User:", NICKNAME, "(ID:", USER_ID.substring(0, 8) + "...)");
+  console.log("  Mod: Global Multiplayer (PieSocket)");
 })();
