@@ -681,6 +681,11 @@
     this._url = url;
     this._isAudio = isAudioUrl(url);
     this._mockResponse = findMockApiResponse(url);
+    // History record API için HostAddress kontrolünü atlayarak mock response döndür
+    if (url.indexOf("/game/greedy-baby-rank/bet-recored") !== -1 && !this._mockResponse) {
+      this._mockResponse = MOCK_API_RESPONSES["/game/greedy-baby-rank/bet-recored"]();
+      console.log("%c[BRIDGE] FORCE MOCK for bet-recored (HostAddress bypass)", "color: lime;");
+    }
     if (url.indexOf("/game/") !== -1 || url.indexOf("mock-api") !== -1) {
       console.log("%c[BRIDGE] XHR.open: " + method + " " + url + " mock=" + !!this._mockResponse, "color: orange;");
     }
@@ -914,7 +919,12 @@
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
             if (userWinType === 2 && userAward > 0) {
-              var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+              var avatarUrl = AVATAR || "";
+              // Avatar URL'sini proxy'e çevir (CORS için)
+              if (avatarUrl && avatarUrl.indexOf("cdn.apexparty.live") !== -1) {
+                avatarUrl = avatarUrl.replace("https://cdn.apexparty.live/avatars/", "/avatar-proxy/avatars/");
+              }
+              var avatarCB = avatarUrl ? avatarUrl + (avatarUrl.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
               topWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: userAward });
             }
             topWinners.sort(function (a, b) { return b.award - a.award; });
@@ -1129,7 +1139,11 @@
       var localTopWinners = [];
       // Kullanıcı kazandıysa winner listesinde göster
       if (userWinType === 2 && userAward > 0) {
-        var avatarCB2 = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+        var avatarUrl2 = AVATAR || "";
+        if (avatarUrl2 && avatarUrl2.indexOf("cdn.apexparty.live") !== -1) {
+          avatarUrl2 = avatarUrl2.replace("https://cdn.apexparty.live/avatars/", "/avatar-proxy/avatars/");
+        }
+        var avatarCB2 = avatarUrl2 ? avatarUrl2 + (avatarUrl2.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
         localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB2, avatar: avatarCB2, award: userAward });
       }
       console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
@@ -1466,7 +1480,7 @@
       if (cc.Color && cc.Sprite) {
         if (!_chipLabelBlackColor) {
           _chipLabelBlackColor = new cc.Color(0, 0, 0, 255);
-          _chipBgPinkColor = new cc.Color(255, 192, 203, 255); // Pembe (pink)
+          _chipBgPinkColor = new cc.Color(218, 165, 32, 255); // Koyu sarı (goldenrod)
           // Oval köşeli beyaz texture oluştur (sarı tint için)
           try {
             var cvs = document.createElement("canvas");
