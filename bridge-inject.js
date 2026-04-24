@@ -20,13 +20,29 @@
   var PIESOCKET_API_KEY = "9CyPAVbTkPvoFVsLScz32Ucq4slVz9J4a6yOwfby";
   var PIESOCKET_CLUSTER = "s15665.fra1";
 
-  // Flutter'dan gelen kullanıcı bilgileri (veya fallback)
-  var USER = window.FLUTTER_USER || {};
-  var AUTH_TOKEN = USER.token || "";
-  var USER_ID = USER.userId || "";
-  var ROOM_ID = USER.roomId || "";
-  var NICKNAME = USER.nickname || "Oyuncu";
-  var AVATAR = USER.avatar || "";
+  // Flutter'dan gelen kullanıcı bilgileri — lazily okunacak
+  var AUTH_TOKEN = "";
+  var USER_ID = "";
+  var ROOM_ID = "0";
+  var NICKNAME = "Oyuncu";
+  var AVATAR = "";
+  var _authReady = false;
+
+  // FLUTTER_USER enjekte edilene kadar bekle
+  function refreshUserFromFlutter() {
+    var u = window.FLUTTER_USER;
+    if (u && u.token) {
+      AUTH_TOKEN = u.token;
+      USER_ID = u.userId || "";
+      ROOM_ID = u.roomId || "0";
+      NICKNAME = u.nickname || "Oyuncu";
+      AVATAR = u.avatar || "";
+      _authReady = true;
+      console.log("%c[BRIDGE] FLUTTER_USER okundu: " + NICKNAME + " room=" + ROOM_ID, "color: lime;");
+      return true;
+    }
+    return false;
+  }
 
   // Oyun durumu
   var _gameId = "";
@@ -45,7 +61,8 @@
   // ============================================================
   function getAuthFromFlutter() {
     return new Promise(function (resolve) {
-      if (AUTH_TOKEN) {
+      // Önce FLUTTER_USER'dan oku
+      if (refreshUserFromFlutter()) {
         resolve({ token: AUTH_TOKEN, userId: USER_ID });
         return;
       }
@@ -55,12 +72,23 @@
           if (auth && auth.token) {
             AUTH_TOKEN = auth.token;
             USER_ID = auth.uuid || auth.userId || "";
-            console.log("%c[BRIDGE] Auth alındı: " + USER_ID.substring(0, 8) + "...", "color: lime;");
+            _authReady = true;
+            console.log("%c[BRIDGE] Auth bridge'den alındı: " + USER_ID.substring(0, 8) + "...", "color: lime;");
           }
+          // FLUTTER_USER'dan da nickname/avatar al
+          refreshUserFromFlutter();
           resolve({ token: AUTH_TOKEN, userId: USER_ID });
         });
       } else {
-        resolve({ token: AUTH_TOKEN, userId: USER_ID });
+        // FLUTTER_USER henüz yok — bekle (500ms aralıklarla 10 deneme)
+        var attempts = 0;
+        var waitInterval = setInterval(function () {
+          attempts++;
+          if (refreshUserFromFlutter() || attempts >= 20) {
+            clearInterval(waitInterval);
+            resolve({ token: AUTH_TOKEN, userId: USER_ID });
+          }
+        }, 300);
       }
     });
   }
@@ -278,12 +306,13 @@
   // getUserInfo — Flutter'dan gelen bilgiler
   var FUN_METHODS = {
     getUserInfo: function () {
+      refreshUserFromFlutter(); // her çağrıda güncelle
       return {
         userId: USER_ID,
         token: AUTH_TOKEN,
         packageName: "com.greedy.niva",
         uiLang: "TR",
-        appVersion: "1.0.0",
+        appVersion: "9.9.9",
         clientType: "h5",
         nickname: NICKNAME,
         avatar: AVATAR,
