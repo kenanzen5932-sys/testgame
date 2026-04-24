@@ -67,6 +67,7 @@
   var _currentState = 0;
   var _userCoins = 0;
   var _userBets = {}; // { foodId: totalBet } bu round için
+  var _currentWinners = []; // settle sonucu top 3 kazananlar (avatar URL'leriyle)
   var _socket = null;
   var _gameLoopTimer = null;
   // Bugünkü toplam kazanç — localStorage'da günlük sakla
@@ -432,6 +433,7 @@
     if (_lotteryHistory.length > 20) _lotteryHistory.length = 20;
     saveLotteryHistory();
 
+    _currentWinners = topWinners;
     console.log("%c[BRIDGE] Settle(listener): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
     sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
     notifyFlutterCoins(_userCoins);
@@ -476,17 +478,19 @@
         }
       }
     }
-    // areaBetData formatına çevir
+    // areaBetData formatına çevir — sadece bahis olan food'ları dahil et
     var result = [];
     for (var fi = 0; fi < 8; fi++) {
       var total = totals[fi] || 0;
-      var chipIdx = Math.min(Math.floor(total / 1000), 4);
-      var chipNum = total > 0 ? Math.max(1, Math.min(Math.ceil(total / 500), 5)) : 0;
-      result.push({
-        foodId: fi,
-        maxUserBet: total > 0 ? 1 : 0,
-        chips: chipNum > 0 ? [{ index: chipIdx, num: chipNum }] : []
-      });
+      if (total > 0) {
+        var chipIdx = Math.min(Math.floor(total / 1000), 4);
+        var chipNum = Math.max(1, Math.min(Math.ceil(total / 500), 5));
+        result.push({
+          foodId: fi,
+          maxUserBet: 1,
+          chips: [{ index: chipIdx, num: chipNum }]
+        });
+      }
     }
     return result;
   }
@@ -1087,6 +1091,7 @@
             if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
             addBetRecord(roundId, winFoodId, _userBets, userAward, _userCoins);
 
+            _currentWinners = topWinners;
             console.log("%c[BRIDGE] Settle(master): winType=" + userWinType + " award=" + userAward + " winners=" + topWinners.length, "color: gold;");
             sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
             notifyFlutterCoins(_userCoins);
@@ -1135,6 +1140,7 @@
                   _currentState = 1;
                   _userBets = {};
                   _allBets = {};
+                  _currentWinners = [];
 
                   sendRTMToGame("greedy_baby_state", {
                     roundId: nRes.round_id, state: 1, countDown: 15,
@@ -1247,6 +1253,7 @@
     if (roundChanged) {
       _syncLastRoundId = info.roundId;
       _userBets = {};
+      _currentWinners = [];
     }
 
     if (stateChanged) {
@@ -1323,6 +1330,7 @@
 
       // TÜM oyuncuların kazananlarını hesapla (PieSocket'ten gelen _allBets dahil)
       var localTopWinners = buildAllWinners(winFoodId, multiple);
+      _currentWinners = localTopWinners;
       console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
       sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
@@ -1736,19 +1744,25 @@
           }
         }
       }
-      // Avatar force-patch: settle view'daki winner head_img sprite'larına avatar yükle
-      if (AVATAR && cc.assetManager && cc.Texture2D && cc.SpriteFrame) {
+      // Avatar force-patch: settle view'daki winner head_img sprite'larına doğru avatarı yükle
+      if (cc.assetManager && cc.Texture2D && cc.SpriteFrame && _currentWinners.length > 0) {
         for (var hi = 0; hi < allNodes.length; hi++) {
           var hn = allNodes[hi];
           // winner_0, winner_1, winner_2 altındaki head_img node'ları
-          if ((hn.name === "winner_0" || hn.name === "winner_1" || hn.name === "winner_2") && hn.active) {
+          var winIdx = -1;
+          if (hn.name === "winner_0" && hn.active) winIdx = 0;
+          else if (hn.name === "winner_1" && hn.active) winIdx = 1;
+          else if (hn.name === "winner_2" && hn.active) winIdx = 2;
+          if (winIdx >= 0 && winIdx < _currentWinners.length) {
+            var winAvatar = _currentWinners[winIdx].avatar || _currentWinners[winIdx].icon || "";
+            if (!winAvatar) continue;
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (headNode) {
               var hSprite = headNode.getComponent(cc.Sprite);
               if (hSprite && !headNode._bridgeAvatarPatched) {
                 headNode._bridgeAvatarPatched = true;
-                (function(sprite, hNode) {
-                  var avatarUrl = AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
+                (function(sprite, hNode, avatarSrc) {
+                  var avatarUrl = avatarSrc + (avatarSrc.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
                   cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
                     if (!err && imgAsset && sprite.isValid) {
                       try {
@@ -1765,7 +1779,7 @@
                       hNode._bridgeAvatarPatched = false;
                     }
                   });
-                })(hSprite, headNode);
+                })(hSprite, headNode, winAvatar);
               }
             }
           }
