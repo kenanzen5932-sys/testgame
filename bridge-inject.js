@@ -580,10 +580,15 @@
     var injectParams = "uid=" + encodeURIComponent(USER_ID || "flutter_user") +
       "&token=" + encodeURIComponent(AUTH_TOKEN || "flutter_token") +
       "&roomId=" + encodeURIComponent(ROOM_ID || "0") +
-      "&betVersion=1" +
-      "&host=" + encodeURIComponent(btoa("https://mock-api"));
+      "&betVersion=1";
     var newUrl = window.location.pathname + "?" + injectParams + window.location.hash;
     window.history.replaceState(null, "", newUrl);
+  }
+  // host paramı her zaman ekle (record API için HostAddress gerekli)
+  if (!window.location.search.includes("host=")) {
+    var sep = window.location.search ? "&" : "?";
+    var hostUrl = window.location.pathname + window.location.search + sep + "host=" + encodeURIComponent(btoa("https://mock-api")) + window.location.hash;
+    window.history.replaceState(null, "", hostUrl);
   }
 
   window.game = window.game || {};
@@ -1523,9 +1528,11 @@
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (headNode) {
               var hSprite = headNode.getComponent(cc.Sprite);
-              if (hSprite && !hSprite.spriteFrame) {
-                (function(sprite) {
-                  cc.assetManager.loadRemote(AVATAR, { ext: ".jpg" }, function(err, imgAsset) {
+              if (hSprite && !headNode._bridgeAvatarPatched) {
+                headNode._bridgeAvatarPatched = true;
+                (function(sprite, hNode) {
+                  var avatarUrl = AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
+                  cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
                     if (!err && imgAsset && sprite.isValid) {
                       try {
                         var tex = new cc.Texture2D();
@@ -1534,10 +1541,14 @@
                         sf.texture = tex;
                         sf.packable = false;
                         sprite.spriteFrame = sf;
-                      } catch(e2) {}
+                      } catch(e2) {
+                        hNode._bridgeAvatarPatched = false;
+                      }
+                    } else {
+                      hNode._bridgeAvatarPatched = false;
                     }
                   });
-                })(hSprite);
+                })(hSprite, headNode);
               }
             }
           }
