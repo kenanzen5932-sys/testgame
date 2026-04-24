@@ -57,7 +57,11 @@
   var _userBets = {}; // { foodId: totalBet } bu round için
   var _socket = null;
   var _gameLoopTimer = null;
-  var _todayWin = 0; // Bugünkü toplam kazanç
+  // Bugünkü toplam kazanç — localStorage'da günlük sakla
+  var _todayWinKey = "todayWin_" + new Date().toISOString().slice(0, 10);
+  var _todayWin = 0;
+  try { var _sw = localStorage.getItem(_todayWinKey); if (_sw) _todayWin = parseInt(_sw) || 0; } catch(e) {}
+  function saveTodayWin() { try { localStorage.setItem(_todayWinKey, _todayWin.toString()); } catch(e) {} }
 
   // Çarpan tablosu
   var MULTIPLIERS = [5, 45, 5, 25, 5, 15, 10, 5];
@@ -864,7 +868,7 @@
             }
 
             // Bugünkü kazancı güncelle
-            if (userAward > 0) _todayWin += userAward;
+            if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
 
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
@@ -1065,7 +1069,7 @@
       }
 
       // Bugünkü kazancı güncelle
-      if (userAward > 0) _todayWin += userAward;
+      if (userAward > 0) { _todayWin += userAward; saveTodayWin(); }
 
       var localTopWinners = [];
       // Kullanıcı kazandıysa winner listesinde göster
@@ -1407,14 +1411,17 @@
       if (cc.Color && cc.Sprite) {
         if (!_chipLabelBlackColor) {
           _chipLabelBlackColor = new cc.Color(0, 0, 0, 255);
-          _chipBgPinkColor = new cc.Color(255, 105, 180, 255);
-          // Beyaz 4x4 texture oluştur (pembe tint için)
+          _chipBgPinkColor = new cc.Color(218, 165, 32, 255); // Koyu sarı (goldenrod)
+          // Oval köşeli beyaz texture oluştur (sarı tint için)
           try {
             var cvs = document.createElement("canvas");
-            cvs.width = 4; cvs.height = 4;
+            cvs.width = 128; cvs.height = 64;
             var ctx2d = cvs.getContext("2d");
+            ctx2d.clearRect(0, 0, 128, 64);
             ctx2d.fillStyle = "#ffffff";
-            ctx2d.fillRect(0, 0, 4, 4);
+            ctx2d.beginPath();
+            ctx2d.roundRect(0, 0, 128, 64, 28);
+            ctx2d.fill();
             cvs.toBlob(function(blob) {
               if (!blob) return;
               var blobUrl = URL.createObjectURL(blob);
@@ -1425,7 +1432,7 @@
                     t2d.image = imgAsset;
                     _whiteSF = new cc.SpriteFrame();
                     _whiteSF.texture = t2d;
-                    console.log("[BRIDGE] White SpriteFrame hazır (pembe chip BG)");
+                    console.log("[BRIDGE] Oval SpriteFrame hazır (sarı chip BG)");
                   } catch(ex) {}
                 }
               });
@@ -1451,6 +1458,9 @@
               }
               chipSprite.color = _chipBgPinkColor;
             }
+            // chip_gray katmanını gizle
+            var chipGray = nd2.getChildByName && nd2.getChildByName("chip_gray");
+            if (chipGray && chipGray.active) chipGray.active = false;
             // layout içindeki ekstra yazıyı gizle (sadece you_chip_label ve ikon kalsın)
             var layoutNode = nd2.getChildByName && nd2.getChildByName("layout");
             if (layoutNode && layoutNode.children) {
