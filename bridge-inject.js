@@ -1466,7 +1466,7 @@
       if (cc.Color && cc.Sprite) {
         if (!_chipLabelBlackColor) {
           _chipLabelBlackColor = new cc.Color(0, 0, 0, 255);
-          _chipBgPinkColor = new cc.Color(218, 165, 32, 255); // Koyu sarı (goldenrod)
+          _chipBgPinkColor = new cc.Color(255, 192, 203, 255); // Pembe (pink)
           // Oval köşeli beyaz texture oluştur (sarı tint için)
           try {
             var cvs = document.createElement("canvas");
@@ -1525,11 +1525,9 @@
             if (layoutNode && layoutNode.children) {
               for (var li = 0; li < layoutNode.children.length; li++) {
                 var lChild = layoutNode.children[li];
-                if (lChild.name !== "you_chip_label") {
-                  var lLabel = lChild.getComponent(cc.Label);
-                  if (lLabel) {
-                    lChild.active = false;
-                  }
+                // Sadece you_chip_label hariç diğerlerini gizle
+                if (lChild.name !== "you_chip_label" && lChild.name !== "icon" && lChild.name !== "you_chip_icon") {
+                  lChild.active = false;
                 }
               }
             }
@@ -1545,8 +1543,8 @@
             var headNode = hn.getChildByName && hn.getChildByName("head_img");
             if (headNode) {
               var hSprite = headNode.getComponent(cc.Sprite);
-              if (hSprite && !headNode._bridgeAvatarPatched) {
-                headNode._bridgeAvatarPatched = true;
+              // Her turda yeniden patch et (flag kontrolü yok)
+              if (hSprite) {
                 (function(sprite, hNode) {
                   var avatarUrl = AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now();
                   cc.assetManager.loadRemote(avatarUrl, { ext: ".jpg" }, function(err, imgAsset) {
@@ -1558,11 +1556,7 @@
                         sf.texture = tex;
                         sf.packable = false;
                         sprite.spriteFrame = sf;
-                      } catch(e2) {
-                        hNode._bridgeAvatarPatched = false;
-                      }
-                    } else {
-                      hNode._bridgeAvatarPatched = false;
+                      } catch(e2) {}
                     }
                   });
                 })(hSprite, headNode);
@@ -1591,7 +1585,7 @@
   setTimeout(function () { clearInterval(netInterval); }, 15000);
 
   // HostAddress'i game yüklendikten sonra globalContext üzerine yaz
-  // System.register wrapper ile modül export'unu intercept et
+  // System.register wrapper + doğrudan patch (çift güvenlik)
   var _origRegister = typeof System !== "undefined" && System.register;
   if (_origRegister) {
     System.register = function(name, deps, declare) {
@@ -1612,6 +1606,17 @@
       return _origRegister.call(System, name, deps, declare);
     };
   }
+
+  // Doğrudan globalContext patch (fallback)
+  setTimeout(function() {
+    try {
+      if (window.game && window.game.globalContext) {
+        window.game.globalContext.HostAddress = "https://mock-api";
+        window.game.globalContext.gameId = window.game.globalContext.gameId || 22;
+        console.log("%c[BRIDGE] GlobalContext.HostAddress patched directly", "color: lime;");
+      }
+    } catch(e) {}
+  }, 2000);
 
   console.log("%c[BRIDGE] Konfigürasyon:", "color: yellow;");
   console.log("  Supabase:", SUPABASE_URL);
