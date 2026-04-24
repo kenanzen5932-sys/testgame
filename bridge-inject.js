@@ -270,20 +270,7 @@
     _origError.apply(console, arguments);
   };
 
-  // https → http patch (yerel geliştirme için)
-  var _origImageSrcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-  if (_origImageSrcDesc && _origImageSrcDesc.set) {
-    Object.defineProperty(HTMLImageElement.prototype, "src", {
-      get: _origImageSrcDesc.get,
-      set: function (val) {
-        if (typeof val === "string" && val.indexOf("https://localhost") === 0) {
-          val = val.replace("https://localhost", "http://localhost");
-        }
-        _origImageSrcDesc.set.call(this, val);
-      },
-      configurable: true,
-    });
-  }
+  // (localhost patch kaldırıldı — Vercel HTTPS kullanıyor)
 
   // fun.* bridge mock (Cocos oyunu bunu bekliyor)
   window.fun = window.fun || {};
@@ -509,10 +496,7 @@
             _patchDone.betVersion = true;
           }
           if (!_patchDone.remoteHost && mod && mod.exports && mod.exports.GameRemoteHost) {
-            mod.exports.GameRemoteHost = mod.exports.GameRemoteHost.replace("https://", "http://");
-            if (mod.exports.AudioRemoteHost) {
-              mod.exports.AudioRemoteHost = mod.exports.AudioRemoteHost.replace("https://", "http://");
-            }
+            // Vercel'de HTTPS doğru, değiştirme
             _patchDone.remoteHost = true;
           }
         }
