@@ -36,7 +36,12 @@
       USER_ID = u.userId || "";
       ROOM_ID = u.roomId || "0";
       NICKNAME = u.nickname || "Oyuncu";
-      AVATAR = u.avatar || "";
+      var rawAvatar = u.avatar || "";
+      if (rawAvatar.indexOf("cdn.apexparty.live") > -1) {
+        AVATAR = rawAvatar.replace("https://cdn.apexparty.live", window.location.origin + "/avatar-proxy");
+      } else {
+        AVATAR = rawAvatar;
+      }
       _authReady = true;
       console.log("%c[BRIDGE] FLUTTER_USER okundu: " + NICKNAME + " room=" + ROOM_ID + " avatar=" + AVATAR, "color: lime;");
       return true;
@@ -398,10 +403,39 @@
   try {
     localStorage.setItem("userInfo", JSON.stringify(getUserInfoData()));
   } catch (e) {}
+  // Avatar ön-yükleme (CORS proxy üzerinden)
+  var _avatarPreloaded = false;
+  function preloadAvatar() {
+    if (_avatarPreloaded || !AVATAR) return;
+    _avatarPreloaded = true;
+    try {
+      var img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = function () {
+        console.log("%c[BRIDGE] Avatar ön-yüklendi: " + img.width + "x" + img.height, "color: lime;");
+        // Cocos assetManager cache'e ekle
+        try {
+          var cc = window.cc;
+          if (cc && cc.assetManager) {
+            cc.assetManager.loadRemote(AVATAR, { ext: ".png" }, function (err) {
+              if (err) console.warn("[BRIDGE] Avatar Cocos cache hata:", err);
+              else console.log("%c[BRIDGE] Avatar Cocos cache OK", "color: lime;");
+            });
+          }
+        } catch (e2) {}
+      };
+      img.onerror = function () {
+        console.warn("[BRIDGE] Avatar ön-yükleme başarısız: " + AVATAR);
+      };
+      img.src = AVATAR;
+    } catch (e) {}
+  }
+
   // FLUTTER_USER gelince güncelle
   var _lsUpdateInterval = setInterval(function () {
     if (refreshUserFromFlutter()) {
       try { localStorage.setItem("userInfo", JSON.stringify(getUserInfoData())); } catch (e) {}
+      preloadAvatar();
       clearInterval(_lsUpdateInterval);
     }
   }, 500);

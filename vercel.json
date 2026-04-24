@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/avatar-proxy/:path*",
+      "destination": "https://cdn.apexparty.live/:path*"
+    },
+    {
       "source": "/game/fe-game-cocos-js-hm/:path*",
       "destination": "/cocos-js/:path*"
     },
