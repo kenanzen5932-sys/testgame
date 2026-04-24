@@ -865,10 +865,12 @@
             // Top kazananlar — sadece gerçek veriler
             var topWinners = sRes.top_winners || [];
             if (userWinType === 2 && userAward > 0) {
-              topWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", award: userAward });
+              var avatarCB = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+              topWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB, avatar: avatarCB, award: userAward });
             }
             topWinners.sort(function (a, b) { return b.award - a.award; });
             topWinners = topWinners.slice(0, 3);
+            console.log("%c[BRIDGE] Settle(EF): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + topWinners.length, "color: gold;");
             sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
             notifyFlutterCoins(_userCoins);
 
@@ -1061,13 +1063,10 @@
       var localTopWinners = [];
       // Kullanıcı kazandıysa winner listesinde göster
       if (userWinType === 2 && userAward > 0) {
-        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR || "", avatar: AVATAR || "", award: userAward });
+        var avatarCB2 = AVATAR ? AVATAR + (AVATAR.indexOf("?") > -1 ? "&" : "?") + "_t=" + Date.now() : "";
+        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: avatarCB2, avatar: avatarCB2, award: userAward });
       }
-      // Kullanıcı kazanmasa bile avatarlı bir giriş ekle (oyun her zaman avatar görsün)
-      if (localTopWinners.length === 0 && AVATAR) {
-        localTopWinners.push({ name: NICKNAME || "Oyuncu", icon: AVATAR, avatar: AVATAR, award: 0 });
-      }
-      console.log("%c[BRIDGE] Settle: winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
+      console.log("%c[BRIDGE] Settle(sync): winType=" + userWinType + " award=" + userAward + " avatar=" + AVATAR + " winners=" + localTopWinners.length, "color: gold;");
       // Oyun UI'daki coin göstergesini güncelle
       sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
       notifyFlutterCoins(_userCoins);
@@ -1414,6 +1413,35 @@
             var chipSprite = nd2.getComponent(cc.Sprite);
             if (chipSprite) {
               chipSprite.color = _chipBgPinkColor;
+            }
+          }
+        }
+      }
+      // Avatar force-patch: settle view'daki winner head_img sprite'larına avatar yükle
+      if (AVATAR && cc.assetManager && cc.Texture2D && cc.SpriteFrame) {
+        for (var hi = 0; hi < allNodes.length; hi++) {
+          var hn = allNodes[hi];
+          // winner_0, winner_1, winner_2 altındaki head_img node'ları
+          if ((hn.name === "winner_0" || hn.name === "winner_1" || hn.name === "winner_2") && hn.active) {
+            var headNode = hn.getChildByName && hn.getChildByName("head_img");
+            if (headNode) {
+              var hSprite = headNode.getComponent(cc.Sprite);
+              if (hSprite && !hSprite.spriteFrame) {
+                (function(sprite) {
+                  cc.assetManager.loadRemote(AVATAR, { ext: ".jpg" }, function(err, imgAsset) {
+                    if (!err && imgAsset && sprite.isValid) {
+                      try {
+                        var tex = new cc.Texture2D();
+                        tex.image = imgAsset;
+                        var sf = new cc.SpriteFrame();
+                        sf.texture = tex;
+                        sf.packable = false;
+                        sprite.spriteFrame = sf;
+                      } catch(e2) {}
+                    }
+                  });
+                })(hSprite);
+              }
             }
           }
         }
