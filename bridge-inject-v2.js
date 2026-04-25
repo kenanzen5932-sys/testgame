@@ -110,6 +110,7 @@
   var _lastInitParams = null;
   var _currentRoundId = null;
   var _currentState = 0;
+  var _lastCountDownSent = { time: 0, value: 0 };
   var _userCoins = 0;
   var _userBets = {};
   var _allBets = {};
@@ -371,19 +372,36 @@
         _userBets = {};
         _allBets = {};
         _currentWinners = [];
-        // Refresh state from server
-        callGameEngine("get_state").then(function(res) {
-          if (res && res.success) {
-            _userCoins = res.coins || _userCoins;
-            _currentRoundId = res.round && res.round.id;
-            _currentState = 1;
-            sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
-            sendRTMToGame("greedy_baby_state", {
-              roundId: _currentRoundId, state: 1, countDown: res.countDown || 30,
-              betData: [], lotteryResult: res.lotteryResult || _lotteryHistory, serverTime: Date.now(),
-            });
-          }
-        });
+        // Check if PieSocket already delivered the new round during animation
+        if (_pendingNewRound) {
+          var pending = _pendingNewRound;
+          _pendingNewRound = null;
+          console.log("[BRIDGE] Processing _pendingNewRound roundId=" + pending.roundId);
+          onGameNewRound(pending);
+          // Still fetch coins from server
+          callGameEngine("get_balance").then(function(res) {
+            if (res && res.success) { _userCoins = res.coins || _userCoins; sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins }); notifyFlutterCoins(_userCoins); }
+          }).catch(function(){});
+        } else {
+          // Refresh state from server
+          callGameEngine("get_state").then(function(res) {
+            if (res && res.success) {
+              _userCoins = res.coins || _userCoins;
+              var newRoundId = res.round && res.round.id;
+              _currentState = 1;
+              sendRTMToGame("greedy_baby_diamond_sync", { diamond: _userCoins });
+              notifyFlutterCoins(_userCoins);
+              // Only send state if it's a different round (prevent timer reset on same round)
+              var countDown = res.countDown || 30;
+              _currentRoundId = newRoundId;
+              _lastCountDownSent = { time: Date.now(), value: countDown };
+              sendRTMToGame("greedy_baby_state", {
+                roundId: _currentRoundId, state: 1, countDown: countDown,
+                betData: [], lotteryResult: res.lotteryResult || _lotteryHistory, serverTime: Date.now(),
+              });
+            }
+          });
+        }
       }, 5000);
     }, 5000);
   }
@@ -391,13 +409,26 @@
   function onGameNewRound(data) {
     // If animating, ignore — we'll get_state after animation
     if (_animatingResult) { _pendingNewRound = data; return; }
+    // DEDUP: don't re-process same round (from both heartbeat + PieSocket)
+    if (data.roundId && data.roundId === _currentRoundId && _currentState === 1) {
+      console.log("[BRIDGE] onGameNewRound SKIP — same roundId=" + data.roundId);
+      return;
+    }
     if (data && data.betOptions) setBetOptionsFromServer(data.betOptions);
     _currentRoundId = data.roundId;
     _currentState = 1;
     _userBets = {};
     _allBets = {};
+    // Use betEndsAt for accurate countdown (not betDuration which is always 30)
+    var countDown = data.betDuration || 30;
+    if (data.betEndsAt) {
+      var remaining = Math.max(0, Math.floor((new Date(data.betEndsAt).getTime() - Date.now()) / 1000));
+      countDown = remaining > 0 ? remaining : countDown;
+    }
+    _lastCountDownSent = { time: Date.now(), value: countDown };
+    console.log("[BRIDGE] onGameNewRound roundId=" + data.roundId + " countDown=" + countDown);
     sendRTMToGame("greedy_baby_state", {
-      roundId: data.roundId, state: 1, countDown: data.betDuration || 30,
+      roundId: data.roundId, state: 1, countDown: countDown,
       betData: [], lotteryResult: data.lotteryResult || _lotteryHistory, serverTime: Date.now(),
     });
   }
@@ -688,6 +719,7 @@
             _gameInitDone = true;
 
             var countDown = result.countDown || 30;
+            _lastCountDownSent = { time: Date.now(), value: countDown };
             _lastInitParams = {
               roundId: _currentRoundId || 1000, state: _currentState || 1, countDown: countDown,
               diamond: _userCoins, betingId: 0, bets: [100, 1000, 5000, 10000, 50000],
@@ -777,18 +809,28 @@
       callGameEngine("heartbeat").then(function(res) {
         if (!res || !res.success) return;
         if (res.action === "round_settled" && res.result) {
-          // Directly trigger result animation from heartbeat response
           console.log("%c[BRIDGE] Heartbeat → round_settled! winFoodId=" + res.result.winFoodId, "color: gold; font-weight: bold;");
           onGameResult(res.result);
         } else if (res.action === "new_round" && res.newRound) {
           console.log("%c[BRIDGE] Heartbeat → new_round! roundId=" + res.newRound.roundId, "color: gold;");
           onGameNewRound(res.newRound);
         } else if (res.action === "none" && res.round) {
-          // Sync countdown from server
+          // Sync countdown from server — only correct when drift > 3s
           if (res.countDown !== undefined && res.round.state === 1 && _currentState === 1) {
-            var serverCountDown = res.countDown;
-            if (serverCountDown <= 0 && !_animatingResult) {
-              // Time expired on server but no settle yet — force immediate re-check
+            var serverCD = res.countDown;
+            // Calculate expected countdown based on last sent value
+            var elapsed = (Date.now() - _lastCountDownSent.time) / 1000;
+            var expectedCD = Math.max(0, _lastCountDownSent.value - elapsed);
+            var drift = serverCD - expectedCD;
+            if (Math.abs(drift) > 3) {
+              console.log("[BRIDGE] Countdown drift=" + drift.toFixed(1) + "s (server=" + serverCD + " expected=" + expectedCD.toFixed(0) + "), syncing");
+              _lastCountDownSent = { time: Date.now(), value: serverCD };
+              sendRTMToGame("greedy_baby_state", {
+                roundId: _currentRoundId, state: 1, countDown: serverCD,
+                betData: [], lotteryResult: _lotteryHistory, serverTime: Date.now(),
+              });
+            }
+            if (serverCD <= 0 && !_animatingResult) {
               console.log("%c[BRIDGE] Countdown=0, forcing re-check...", "color: orange;");
               setTimeout(function() { callGameEngine("heartbeat").then(function(r2) {
                 if (r2 && r2.success && r2.action === "round_settled" && r2.result) onGameResult(r2.result);
