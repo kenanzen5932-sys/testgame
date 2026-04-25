@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v3.1";
+  var BRIDGE_VERSION = "v3.2";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -628,8 +628,18 @@
     console.log("%c[BRIDGE] RTM queue flush: " + _rtmQueue.length + " mesaj gönderiliyor", "color: lime; font-weight: bold;");
     var q = _rtmQueue.slice();
     _rtmQueue = [];
+    // Queue'daki mesajları güncel sync bilgisiyle gönder (stale countdown önle)
+    var freshSync = getSyncRoundInfo();
     for (var i = 0; i < q.length; i++) {
-      sendRTMToGame(q[i].event, q[i].params);
+      var msg = q[i];
+      if (msg.event === "greedy_baby_init" || msg.event === "greedy_baby_state") {
+        // Countdown ve roundId'yi güncelle
+        msg.params.countDown = freshSync.countDown;
+        msg.params.roundId = freshSync.roundId;
+        msg.params.state = freshSync.state;
+        msg.params.serverTime = Date.now();
+      }
+      sendRTMToGame(msg.event, msg.params);
     }
   }
 
@@ -1258,13 +1268,6 @@
     };
     console.log("%c[BRIDGE] sendInitToGame → greedy_baby_init", "color: #4CAF50; font-weight: bold;", _lastInitParams);
     sendRTMToGame("greedy_baby_init", _lastInitParams);
-    // Sahne yüklenmesini garantilemek için 2s sonra tekrar gönder
-    setTimeout(function () {
-      if (_lastInitParams) {
-        console.log("%c[BRIDGE] sendInitToGame → 2s gecikmiş tekrar gönderim", "color: #4CAF50;");
-        sendRTMToGame("greedy_baby_init", _lastInitParams);
-      }
-    }, 2000);
   }
 
   // lotteryHistory: localStorage'dan yükle (sayfa yeniden açıldığında korunsun)
