@@ -117,6 +117,37 @@
   var _socket = null;
   var _heartbeatTimer = null;
   var _players = {};
+  var _currentBetOptions = [500, 50000, 200000, 500000, 1000000];
+
+  function setBetOptionsFromServer(options) {
+    if (!Array.isArray(options) || options.length < 5) return;
+    var parsed = [];
+    for (var i = 0; i < 5; i++) {
+      var n = parseInt(options[i], 10);
+      if (!isFinite(n) || n <= 0) return;
+      parsed.push(n);
+    }
+    _currentBetOptions = parsed;
+  }
+
+  function formatBetShort(n) {
+    if (n >= 1000000) return (n / 1000000) + "M";
+    if (n >= 1000) return (n / 1000) + "K";
+    return String(n);
+  }
+
+  function normalizeBetAmount(rawAmount) {
+    var amount = parseInt(rawAmount, 10);
+    if (!isFinite(amount) || amount <= 0) return _currentBetOptions[0] || 500;
+    for (var i = 0; i < _currentBetOptions.length; i++) {
+      if (amount === _currentBetOptions[i]) return amount;
+    }
+    var oldBets = [100, 1000, 5000, 10000, 50000];
+    for (var j = 0; j < oldBets.length; j++) {
+      if (amount === oldBets[j]) return _currentBetOptions[j] || amount;
+    }
+    return amount;
+  }
 
   var _todayWinKey = "todayWin_" + new Date().toISOString().slice(0, 10);
   var _todayWin = 0;
@@ -352,6 +383,7 @@
   function onGameNewRound(data) {
     // If animating, ignore — we'll get_state after animation
     if (_animatingResult) { _pendingNewRound = data; return; }
+    if (data && data.betOptions) setBetOptionsFromServer(data.betOptions);
     _currentRoundId = data.roundId;
     _currentState = 1;
     _userBets = {};
@@ -626,6 +658,7 @@
       getAuthFromFlutter().then(function () {
         callGameEngine("get_state").then(function (result) {
           if (result && result.success) {
+            setBetOptionsFromServer(result.betOptions);
             _userCoins = result.coins || 0;
             _currentRoundId = result.round && result.round.id;
             _currentState = result.round ? result.round.state : 1;
@@ -634,7 +667,7 @@
             var countDown = result.countDown || 30;
             _lastInitParams = {
               roundId: _currentRoundId || 1000, state: _currentState || 1, countDown: countDown,
-              diamond: _userCoins, betingId: 0, bets: [100, 1000, 5000, 10000, 50000],
+              diamond: _userCoins, betingId: 0, bets: _currentBetOptions.slice(),
               betData: [], rank: 0, lotteryTime: 5,
               lotteryResult: result.lotteryResult || _lotteryHistory || [],
               todayWin: _todayWin, winFoodId: -1, serverTime: Date.now(),
@@ -645,7 +678,7 @@
             _gameInitDone = true;
             _lastInitParams = {
               roundId: 1000, state: 1, countDown: 30, diamond: _userCoins,
-              betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
+              betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
               lotteryTime: 5, lotteryResult: _lotteryHistory || [],
               todayWin: _todayWin, winFoodId: -1, serverTime: Date.now(),
             };
@@ -656,7 +689,7 @@
           _gameInitDone = true;
           _lastInitParams = {
             roundId: 1000, state: 1, countDown: 30, diamond: _userCoins,
-            betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
+            betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
             lotteryTime: 5, lotteryResult: [], todayWin: 0, winFoodId: -1, serverTime: Date.now(),
           };
           sendRTMToGame("greedy_baby_init", _lastInitParams);
@@ -670,7 +703,7 @@
         _gameInitDone = true;
         _lastInitParams = {
           roundId: 1000, state: 1, countDown: 30, diamond: 0,
-          betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
+          betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
           lotteryTime: 5, lotteryResult: [], todayWin: 0, winFoodId: -1, serverTime: Date.now(),
         };
         sendRTMToGame("greedy_baby_init", _lastInitParams);
@@ -752,7 +785,8 @@
     if (betDataArr.length === 0) return;
 
     var betFoodId = betDataArr[0].foodId || 0;
-    var betAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || 100;
+    var rawBetAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || _currentBetOptions[0] || 500;
+    var betAmount = normalizeBetAmount(rawBetAmount);
 
     if (_userCoins < betAmount) {
       console.warn("[BRIDGE] Yetersiz bakiye! coins=" + _userCoins + " bet=" + betAmount);
@@ -888,6 +922,14 @@
         for (var i = 0; i < labels.length; i++) {
           var lbl = labels[i];
           if (!lbl || !lbl.string) continue;
+
+          // Force chip labels to server-configured bet options
+          if (lbl.string === "100" || lbl.string === "500") { lbl.string = formatBetShort(_currentBetOptions[0] || 500); continue; }
+          if (lbl.string === "1K" || lbl.string === "1k" || lbl.string === "1000") { lbl.string = formatBetShort(_currentBetOptions[1] || 50000); continue; }
+          if (lbl.string === "5K" || lbl.string === "5k" || lbl.string === "5000" || lbl.string === "200000") { lbl.string = formatBetShort(_currentBetOptions[2] || 200000); continue; }
+          if (lbl.string === "10K" || lbl.string === "10k" || lbl.string === "10000" || lbl.string === "500000") { lbl.string = formatBetShort(_currentBetOptions[3] || 500000); continue; }
+          if (lbl.string === "50K" || lbl.string === "50k" || lbl.string === "50000" || lbl.string === "1000000" || lbl.string === "1M" || lbl.string === "1m") { lbl.string = formatBetShort(_currentBetOptions[4] || 1000000); continue; }
+
           if (TR_MAP[lbl.string]) { lbl.string = TR_MAP[lbl.string]; continue; }
           var matched = false;
           for (var p = 0; p < TR_PREFIX.length; p++) {
