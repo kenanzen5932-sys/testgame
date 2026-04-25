@@ -206,13 +206,30 @@
     };
     _socket.onmessage = function (evt) {
       try {
-        var msg = JSON.parse(evt.data);
-        var event = msg.event || "";
-        var data = typeof msg.data === "string" ? JSON.parse(msg.data) : msg.data;
+        var raw = JSON.parse(evt.data);
+        var event, data;
+        // PieSocket may wrap in {event:"message",data:"..."} or send direct
+        if (raw.sender_id === "game-engine-v2") {
+          // Direct server broadcast format
+          event = raw.event || "";
+          data = typeof raw.data === "string" ? JSON.parse(raw.data) : raw.data;
+        } else if (raw.event === "message" || raw.event === "system") {
+          // PieSocket envelope — inner data is the actual payload
+          var inner = typeof raw.data === "string" ? JSON.parse(raw.data) : raw.data;
+          if (inner && inner.event) { event = inner.event; data = typeof inner.data === "string" ? JSON.parse(inner.data) : inner.data; }
+          else { event = raw.event; data = inner; }
+        } else if (raw.event && raw.data) {
+          // Already unwrapped format
+          event = raw.event;
+          data = typeof raw.data === "string" ? JSON.parse(raw.data) : raw.data;
+        } else {
+          // Try to parse the whole thing as inner payload
+          event = raw.event || ""; data = raw.data || raw;
+        }
         if (!event || !data) return;
         console.log("%c[PIESOCKET ←] " + event, "color: #ff9800;", data);
         handleServerEvent(event, data);
-      } catch (e) {}
+      } catch (e) { console.warn("[PIESOCKET] parse error:", e, evt.data); }
     };
     _socket.onclose = function () {
       console.log("%c[BRIDGE] PieSocket kapandı, 3s sonra tekrar...", "color: red;");
@@ -241,7 +258,20 @@
     }
   }
 
+  var _lastSettledRoundId = null;
+
   function onGameResult(data) {
+    // Prevent double-processing same round (from both PieSocket and heartbeat)
+    if (data.roundId && data.roundId === _lastSettledRoundId) {
+      console.log("[BRIDGE] onGameResult SKIP — already settled roundId=" + data.roundId);
+      return;
+    }
+    if (_animatingResult) {
+      console.log("[BRIDGE] onGameResult SKIP — already animating");
+      return;
+    }
+    _lastSettledRoundId = data.roundId;
+
     var winFoodId = data.winFoodId;
     var multiplier = data.multiplier || MULTIPLIERS[winFoodId];
     var topWinners = data.topWinners || [];
@@ -686,13 +716,30 @@
     _heartbeatTimer = setInterval(function() {
       if (_animatingResult) return; // Don't poll during animation
       callGameEngine("heartbeat").then(function(res) {
-        // Heartbeat triggers transitions on server; PieSocket broadcasts handle the rest
-        if (res && res.success && res.action && res.action !== "none") {
-          console.log("%c[BRIDGE] Heartbeat triggered: " + res.action, "color: gold; font-weight: bold;");
+        if (!res || !res.success) return;
+        if (res.action === "round_settled" && res.result) {
+          // Directly trigger result animation from heartbeat response
+          console.log("%c[BRIDGE] Heartbeat → round_settled! winFoodId=" + res.result.winFoodId, "color: gold; font-weight: bold;");
+          onGameResult(res.result);
+        } else if (res.action === "new_round" && res.newRound) {
+          console.log("%c[BRIDGE] Heartbeat → new_round! roundId=" + res.newRound.roundId, "color: gold;");
+          onGameNewRound(res.newRound);
+        } else if (res.action === "none" && res.round) {
+          // Sync countdown from server
+          if (res.countDown !== undefined && res.round.state === 1 && _currentState === 1) {
+            var serverCountDown = res.countDown;
+            if (serverCountDown <= 0 && !_animatingResult) {
+              // Time expired on server but no settle yet — force immediate re-check
+              console.log("%c[BRIDGE] Countdown=0, forcing re-check...", "color: orange;");
+              setTimeout(function() { callGameEngine("heartbeat").then(function(r2) {
+                if (r2 && r2.success && r2.action === "round_settled" && r2.result) onGameResult(r2.result);
+              }); }, 500);
+            }
+          }
         }
       }).catch(function() {});
-    }, 5000);
-    console.log("%c[BRIDGE] Heartbeat polling başlatıldı (5s)", "color: gold;");
+    }, 3000);
+    console.log("%c[BRIDGE] Heartbeat polling başlatıldı (3s)", "color: gold;");
   }
 
   // ============================================================
