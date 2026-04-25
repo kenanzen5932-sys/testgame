@@ -429,11 +429,25 @@
   }
 
   // ============================================================
-  // 7) COCOS RTM
+  // 7) COCOS RTM (with message queue)
   // ============================================================
+  var _rtmQueue = [];
+  function flushRTMQueue() {
+    if (typeof window.RTMResponseMsg !== "function" || !_gameId) return;
+    while (_rtmQueue.length > 0) {
+      var item = _rtmQueue.shift();
+      var payload = JSON.stringify({ gameId: _gameId, events: [{ event: item.event, params: item.params }] });
+      try { window.RTMResponseMsg(payload); console.log("%c[→GAME][Q] " + item.event, "color: #4CAF50;", item.params); }
+      catch (e) { console.error("[BRIDGE] RTMResponseMsg hata:", e); }
+    }
+  }
   function sendRTMToGame(event, params) {
     if (!_gameId) return;
-    if (typeof window.RTMResponseMsg !== "function") { console.warn("[BRIDGE] sendRTMToGame BLOCKED — RTMResponseMsg yok! event=" + event); return; }
+    if (typeof window.RTMResponseMsg !== "function") {
+      console.warn("[BRIDGE] sendRTMToGame QUEUED — RTMResponseMsg yok! event=" + event);
+      _rtmQueue.push({ event: event, params: params });
+      return;
+    }
     var payload = JSON.stringify({ gameId: _gameId, events: [{ event: event, params: params }] });
     try { window.RTMResponseMsg(payload); console.log("%c[→GAME] " + event, "color: #4CAF50;", params); }
     catch (e) { console.error("[BRIDGE] RTMResponseMsg hata:", e); }
@@ -734,6 +748,9 @@
       set: function (fn) {
         _realRTMResponseMsg = fn;
         _rtmSetCount++;
+        console.log("[BRIDGE] RTMResponseMsg SET (#" + _rtmSetCount + "), queue=" + _rtmQueue.length);
+        // Flush any queued messages first
+        setTimeout(function() { flushRTMQueue(); }, 50);
         if (_rtmSetCount === 1) {
           if (_gameInitDone && _lastInitParams) {
             setTimeout(function() { if (_lastInitParams) sendRTMToGame("greedy_baby_init", _lastInitParams); }, 200);
