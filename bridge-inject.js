@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v3.5";
+  var BRIDGE_VERSION = "v3.6";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -654,8 +654,8 @@
     for (var j = 0; j < others.length; j++) {
       sendRTMToGame(others[j].event, others[j].params);
     }
-    // Son state'i güncel sync ile gönder (sadece 1 kere)
-    if (lastState || lastInit) {
+    // Queue'da state varsa son state'i güncel sync ile gönder (sadece 1 kere)
+    if (lastState) {
       sendRTMToGame("greedy_baby_state", {
         roundId: freshSync.roundId,
         state: freshSync.state,
@@ -1155,7 +1155,7 @@
     _gameInitDone = true;
     if (typeof window.RTMResponseMsg === "function") {
       console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
-      startLocalGameLoop();
+      startLocalGameLoop(1200);
     } else {
       _pendingStartLocalLoop = true;
       console.log("%c[BRIDGE] Sync loop RTM hazır olunca başlayacak", "color: orange;");
@@ -1187,7 +1187,7 @@
               if (_pendingStartLocalLoop) {
                 _pendingStartLocalLoop = false;
                 console.log("%c[BRIDGE] RTM #1 → bekleyen sync loop başlatılıyor", "color: yellow; font-weight: bold;");
-                startLocalGameLoop();
+                startLocalGameLoop(1200);
               }
             }, 100);
             // Init henüz başlamadıysa başlat
@@ -1568,13 +1568,22 @@
     return { roundId: roundId, state: state, countDown: countDown, elapsed: elapsed, winFoodId: winFoodId };
   }
 
-  function startLocalGameLoop() {
+  function startLocalGameLoop(firstTickDelayMs) {
     console.log("%c[BRIDGE] Senkron global game loop başlatıldı", "color: orange; font-weight: bold;");
     _syncLastState = -1;
     _syncLastRoundId = -1;
-    syncTick(); // İlk tick hemen
     if (_syncTimer) clearInterval(_syncTimer);
-    _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
+    var delay = typeof firstTickDelayMs === "number" ? firstTickDelayMs : 0;
+    var startTick = function () {
+      try { syncTick(); } catch (e) { console.error("[BRIDGE] start syncTick hata:", e); }
+      _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
+    };
+    if (delay > 0) {
+      console.log("%c[BRIDGE] İlk syncTick gecikmeli başlatılıyor: " + delay + "ms", "color: orange;");
+      setTimeout(startTick, delay);
+    } else {
+      startTick();
+    }
   }
 
   function syncTick() {
