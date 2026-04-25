@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v3.4";
+  var BRIDGE_VERSION = "v3.5";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1153,8 +1153,13 @@
     _currentRoundId = syncInfo.roundId;
     _currentState = syncInfo.state;
     _gameInitDone = true;
-    console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
-    startLocalGameLoop();
+    if (typeof window.RTMResponseMsg === "function") {
+      console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
+      startLocalGameLoop();
+    } else {
+      _pendingStartLocalLoop = true;
+      console.log("%c[BRIDGE] Sync loop RTM hazır olunca başlayacak", "color: orange;");
+    }
   }
 
   // ============================================================
@@ -1164,6 +1169,7 @@
   // Yöntem 1: RTMResponseMsg interceptor — oyun set edince init başlat
   var _realRTMResponseMsg = null;
   var _rtmSetCount = 0;
+  var _pendingStartLocalLoop = false;
   try {
     Object.defineProperty(window, "RTMResponseMsg", {
       set: function (fn) {
@@ -1178,6 +1184,11 @@
             // Önce queue'daki mesajları flush et (BLOCKED olanlar)
             setTimeout(function() {
               _flushRTMQueue();
+              if (_pendingStartLocalLoop) {
+                _pendingStartLocalLoop = false;
+                console.log("%c[BRIDGE] RTM #1 → bekleyen sync loop başlatılıyor", "color: yellow; font-weight: bold;");
+                startLocalGameLoop();
+              }
             }, 100);
             // Init henüz başlamadıysa başlat
             if (!_gameInitDone && _initAttempts === 0) {
