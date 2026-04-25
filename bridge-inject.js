@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.6";
+  var BRIDGE_VERSION = "v2.7";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1075,22 +1075,37 @@
   // 8b) AUTO-INIT: Basit setTimeout + RTMResponseMsg tetikleyici (v2.4)
   // ============================================================
 
-  // Yöntem 1: RTMResponseMsg interceptor — oyun set edince 3s sonra init
+  // Yöntem 1: RTMResponseMsg interceptor — oyun set edince init başlat
   var _realRTMResponseMsg = null;
+  var _rtmSetCount = 0;
   try {
     Object.defineProperty(window, "RTMResponseMsg", {
       set: function (fn) {
         _realRTMResponseMsg = fn;
-        console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
-        // HEMEN init et — 500ms sonra (oyunun hazırlanması için kısa bekleme)
-        setTimeout(function () {
-          try {
-            if (!_gameInitDone) {
-              console.log("%c[BRIDGE] RTM 500ms timer → handleGameInit", "color: orange; font-weight: bold;");
-              handleGameInit();
-            }
-          } catch (e) { console.error("[BRIDGE] RTM timer init hata:", e); }
-        }, 500);
+        _rtmSetCount++;
+        console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti #" + _rtmSetCount + " → RTM hazır!", "color: lime; font-weight: bold;");
+
+        if (_rtmSetCount === 1) {
+          // İlk set: handleGameInit başlat (PieSocket, Supabase, vb.)
+          setTimeout(function () {
+            try {
+              if (!_gameInitDone) {
+                console.log("%c[BRIDGE] RTM #1 → 500ms → handleGameInit", "color: orange; font-weight: bold;");
+                handleGameInit();
+              }
+            } catch (e) { console.error("[BRIDGE] RTM timer init hata:", e); }
+          }, 500);
+        } else if (_rtmSetCount >= 2 && _lastInitParams) {
+          // İkinci+ set: Oyun sahnesi yüklendi, init verilerini TEKRAR gönder
+          setTimeout(function () {
+            try {
+              if (_lastInitParams) {
+                console.log("%c[BRIDGE] RTM #" + _rtmSetCount + " → Sahne yüklendi, init tekrar gönderiliyor", "color: lime; font-weight: bold; font-size: 14px;");
+                sendRTMToGame("greedy_baby_init", _lastInitParams);
+              }
+            } catch (e) { console.error("[BRIDGE] RTM re-send hata:", e); }
+          }, 300);
+        }
       },
       get: function () { return _realRTMResponseMsg; },
       configurable: true
@@ -1188,6 +1203,13 @@
     };
     console.log("%c[BRIDGE] sendInitToGame → greedy_baby_init", "color: #4CAF50; font-weight: bold;", _lastInitParams);
     sendRTMToGame("greedy_baby_init", _lastInitParams);
+    // Sahne yüklenmesini garantilemek için 2s sonra tekrar gönder
+    setTimeout(function () {
+      if (_lastInitParams) {
+        console.log("%c[BRIDGE] sendInitToGame → 2s gecikmiş tekrar gönderim", "color: #4CAF50;");
+        sendRTMToGame("greedy_baby_init", _lastInitParams);
+      }
+    }, 2000);
   }
 
   // lotteryHistory: localStorage'dan yükle (sayfa yeniden açıldığında korunsun)
