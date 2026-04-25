@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v3.2";
+  var BRIDGE_VERSION = "v3.3";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -630,16 +630,28 @@
     _rtmQueue = [];
     // Queue'daki mesajları güncel sync bilgisiyle gönder (stale countdown önle)
     var freshSync = getSyncRoundInfo();
+    var forceSyncAfterFlush = false;
     for (var i = 0; i < q.length; i++) {
       var msg = q[i];
-      if (msg.event === "greedy_baby_init" || msg.event === "greedy_baby_state") {
-        // Countdown ve roundId'yi güncelle
+      if (msg.event === "greedy_baby_init") {
+        // Init payload'ında state'i bozma; sadece zaman bilgisini güncelle
         msg.params.countDown = freshSync.countDown;
         msg.params.roundId = freshSync.roundId;
-        msg.params.state = freshSync.state;
         msg.params.serverTime = Date.now();
+      } else if (msg.event === "greedy_baby_state") {
+        // State payload'ı queue'da bayat kalabilir; flush sonrası syncTick ile taze state gönder
+        forceSyncAfterFlush = true;
+        continue;
       }
       sendRTMToGame(msg.event, msg.params);
+    }
+    if (forceSyncAfterFlush) {
+      _syncLastRoundId = -1;
+      _syncLastState = -1;
+      _syncLastCountDown = -1;
+      setTimeout(function () {
+        try { syncTick(); } catch (e) { console.error("[BRIDGE] force syncTick hata:", e); }
+      }, 50);
     }
   }
 
@@ -1502,6 +1514,7 @@
   var _syncTimer = null;
   var _syncLastState = -1;
   var _syncLastRoundId = -1;
+  var _syncLastCountDown = -1;
 
   // Deterministik hash: round ID'den kazanan yiyecek belirle (herkes aynı sonucu görür)
   function hashToFood(roundId) {
@@ -1536,6 +1549,7 @@
     console.log("%c[BRIDGE] Senkron global game loop başlatıldı", "color: orange; font-weight: bold;");
     _syncLastState = -1;
     _syncLastRoundId = -1;
+    _syncLastCountDown = -1;
     syncTick(); // İlk tick hemen
     if (_syncTimer) clearInterval(_syncTimer);
     _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
@@ -1545,11 +1559,13 @@
     var info = getSyncRoundInfo();
     var roundChanged = info.roundId !== _syncLastRoundId;
     var stateChanged = info.state !== _syncLastState;
+    var countDownChanged = info.countDown !== _syncLastCountDown;
 
-    if (!roundChanged && !stateChanged) return; // Değişiklik yok
+    if (!roundChanged && !stateChanged && !countDownChanged) return; // Değişiklik yok
 
     _currentRoundId = info.roundId;
     _currentState = info.state;
+    _syncLastCountDown = info.countDown;
 
     // Yeni round başladı
     if (roundChanged) {
