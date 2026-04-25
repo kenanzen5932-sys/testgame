@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v3.6";
+  var BRIDGE_VERSION = "v3.0";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -598,18 +598,15 @@
   }
 
   // ============================================================
-  // 6) COCOS'A RTM MESAJI GÖNDER (queue destekli)
+  // 6) COCOS'A RTM MESAJI GÖNDER
   // ============================================================
-  var _rtmQueue = [];
   function sendRTMToGame(event, params) {
     if (!_gameId) {
       console.warn("[BRIDGE] sendRTMToGame BLOCKED — _gameId boş! event=" + event);
       return;
     }
     if (typeof window.RTMResponseMsg !== "function") {
-      // RTM henüz hazır değil — queue'la
-      console.log("%c[BRIDGE] sendRTMToGame QUEUED — RTMResponseMsg yok, sıraya alındı: " + event, "color: orange;");
-      _rtmQueue.push({ event: event, params: params });
+      console.warn("[BRIDGE] sendRTMToGame BLOCKED — RTMResponseMsg yok! event=" + event);
       return;
     }
     var payload = JSON.stringify({
@@ -621,50 +618,6 @@
       console.log("%c[→GAME] " + event, "color: #4CAF50;", params);
     } catch (e) {
       console.error("[BRIDGE] RTMResponseMsg hata:", e);
-    }
-  }
-  function _flushRTMQueue() {
-    if (_rtmQueue.length === 0) return;
-    console.log("%c[BRIDGE] RTM queue flush: " + _rtmQueue.length + " mesaj gönderiliyor", "color: lime; font-weight: bold;");
-    var q = _rtmQueue.slice();
-    _rtmQueue = [];
-    var freshSync = getSyncRoundInfo();
-    // Sadece son init ve son state'i gönder (tekrar eden mesajları atla)
-    var lastInit = null;
-    var lastState = null;
-    var others = [];
-    for (var i = 0; i < q.length; i++) {
-      if (q[i].event === "greedy_baby_init") {
-        lastInit = q[i];
-      } else if (q[i].event === "greedy_baby_state") {
-        lastState = q[i];
-      } else {
-        others.push(q[i]);
-      }
-    }
-    // Init'i güncel sync ile gönder
-    if (lastInit) {
-      lastInit.params.countDown = freshSync.countDown;
-      lastInit.params.roundId = freshSync.roundId;
-      lastInit.params.state = freshSync.state;
-      lastInit.params.serverTime = Date.now();
-      sendRTMToGame(lastInit.event, lastInit.params);
-    }
-    // Diğer mesajları gönder (diamond_sync, rank vs)
-    for (var j = 0; j < others.length; j++) {
-      sendRTMToGame(others[j].event, others[j].params);
-    }
-    // Queue'da state varsa son state'i güncel sync ile gönder (sadece 1 kere)
-    if (lastState) {
-      sendRTMToGame("greedy_baby_state", {
-        roundId: freshSync.roundId,
-        state: freshSync.state,
-        countDown: freshSync.countDown,
-        serverTime: Date.now(),
-      });
-      // syncTick'in tekrar göndermesini engelle
-      _syncLastRoundId = freshSync.roundId;
-      _syncLastState = freshSync.state;
     }
   }
 
@@ -1115,50 +1068,44 @@
       console.log("%c[BRIDGE] ████ handleGameInit BAŞLATILIYOR ████ deneme=" + _initAttempts + " authToken=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) + "..." : "YOK") + " userId=" + (USER_ID ? USER_ID.substring(0, 8) : "YOK"), "color: lime; font-weight: bold; font-size: 14px;");
       getAuthFromFlutter().then(function () {
         console.log("%c[BRIDGE] Auth alındı → get_state çağrılıyor... token=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) : "YOK"), "color: #4CAF50;");
-
-        console.log("%c[BRIDGE] PieSocket bağlantısı başlatılıyor...", "color: #2196F3;");
-        connectPieSocket();
-        startMasterCheck();
-
         callGameEngine("get_state").then(function (result) {
           console.log("%c[BRIDGE] get_state sonucu:", "color: #4CAF50;", JSON.stringify(result).substring(0, 200));
           if (result && result.success) {
             _userCoins = result.coins || 0;
+            _gameInitDone = true; // BAŞARILI — artık tekrar denenmez
             console.log("%c[BRIDGE] ✓ INIT BAŞARILI — coins=" + _userCoins, "color: lime; font-weight: bold; font-size: 16px;");
           } else {
             console.warn("[BRIDGE] get_state başarısız:", result);
           }
-          _finishInit(result);
+          var syncInfo = getSyncRoundInfo();
+          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
+          _currentRoundId = syncInfo.roundId;
+          _currentState = syncInfo.state;
+          console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
+          startLocalGameLoop();
         }).catch(function(err) {
           console.error("[BRIDGE] get_state HATA:", err);
-          _finishInit(null);
+          var syncInfo = getSyncRoundInfo();
+          sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
+          startLocalGameLoop();
         });
-      }).catch(function(authErr) {
-        console.error("[BRIDGE] getAuthFromFlutter HATA:", authErr);
+
+        console.log("%c[BRIDGE] PieSocket bağlantısı başlatılıyor...", "color: #2196F3;");
         connectPieSocket();
         startMasterCheck();
-        _finishInit(null);
+        _gameInitDone = true; // Auth başarılı, PieSocket başladı
+      }).catch(function(authErr) {
+        console.error("[BRIDGE] getAuthFromFlutter HATA:", authErr);
+        var syncInfo = getSyncRoundInfo();
+        sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
+        startLocalGameLoop();
+        connectPieSocket();
+        startMasterCheck();
+        _gameInitDone = true;
       });
     } catch(fatalErr) {
       console.error("[BRIDGE] handleGameInit FATAL HATA:", fatalErr, fatalErr.stack || "");
       // Fatal hata — tekrar denenebilir
-    }
-  }
-
-  // Init'i tamamla: sendInitToGame + syncLoop başlat
-  // RTM hazır değilse queue'la, RTM gelince gönderilir
-  function _finishInit(stateResult) {
-    var syncInfo = getSyncRoundInfo();
-    sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, stateResult, syncInfo.countDown);
-    _currentRoundId = syncInfo.roundId;
-    _currentState = syncInfo.state;
-    _gameInitDone = true;
-    if (typeof window.RTMResponseMsg === "function") {
-      console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
-      startLocalGameLoop(1200);
-    } else {
-      _pendingStartLocalLoop = true;
-      console.log("%c[BRIDGE] Sync loop RTM hazır olunca başlayacak", "color: orange;");
     }
   }
 
@@ -1169,7 +1116,6 @@
   // Yöntem 1: RTMResponseMsg interceptor — oyun set edince init başlat
   var _realRTMResponseMsg = null;
   var _rtmSetCount = 0;
-  var _pendingStartLocalLoop = false;
   try {
     Object.defineProperty(window, "RTMResponseMsg", {
       set: function (fn) {
@@ -1178,21 +1124,18 @@
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti #" + _rtmSetCount + " → RTM hazır!", "color: lime; font-weight: bold;");
 
         if (_rtmSetCount === 1) {
-          // İlk set: oyun RTM hazır — queue'daki mesajları gönder
+          // İlk set: oyun RTM hazır
           try {
-            console.log("%c[BRIDGE] RTM #1 → Queue flush + init kontrol", "color: lime; font-weight: bold;");
-            // Önce queue'daki mesajları flush et (BLOCKED olanlar)
-            setTimeout(function() {
-              _flushRTMQueue();
-              if (_pendingStartLocalLoop) {
-                _pendingStartLocalLoop = false;
-                console.log("%c[BRIDGE] RTM #1 → bekleyen sync loop başlatılıyor", "color: yellow; font-weight: bold;");
-                startLocalGameLoop(1200);
-              }
-            }, 100);
-            // Init henüz başlamadıysa başlat
-            if (!_gameInitDone && _initAttempts === 0) {
-              console.log("%c[BRIDGE] RTM #1 → handleGameInit başlatılıyor", "color: orange; font-weight: bold;");
+            if (_gameInitDone && _lastInitParams) {
+              // Init zaten yapıldı ama BLOCKED olmuştu — şimdi tekrar gönder
+              console.log("%c[BRIDGE] RTM #1 → Init zaten hazır, BLOCKED verileri gönderiliyor", "color: lime; font-weight: bold; font-size: 14px;");
+              setTimeout(function() {
+                try {
+                  if (_lastInitParams) sendRTMToGame("greedy_baby_init", _lastInitParams);
+                } catch(e) {}
+              }, 200);
+            } else if (!_gameInitDone) {
+              console.log("%c[BRIDGE] RTM #1 → HEMEN handleGameInit", "color: orange; font-weight: bold;");
               handleGameInit();
             }
           } catch (e) { console.error("[BRIDGE] RTM init hata:", e); }
@@ -1304,6 +1247,13 @@
     };
     console.log("%c[BRIDGE] sendInitToGame → greedy_baby_init", "color: #4CAF50; font-weight: bold;", _lastInitParams);
     sendRTMToGame("greedy_baby_init", _lastInitParams);
+    // Sahne yüklenmesini garantilemek için 2s sonra tekrar gönder
+    setTimeout(function () {
+      if (_lastInitParams) {
+        console.log("%c[BRIDGE] sendInitToGame → 2s gecikmiş tekrar gönderim", "color: #4CAF50;");
+        sendRTMToGame("greedy_baby_init", _lastInitParams);
+      }
+    }, 2000);
   }
 
   // lotteryHistory: localStorage'dan yükle (sayfa yeniden açıldığında korunsun)
@@ -1568,22 +1518,13 @@
     return { roundId: roundId, state: state, countDown: countDown, elapsed: elapsed, winFoodId: winFoodId };
   }
 
-  function startLocalGameLoop(firstTickDelayMs) {
+  function startLocalGameLoop() {
     console.log("%c[BRIDGE] Senkron global game loop başlatıldı", "color: orange; font-weight: bold;");
     _syncLastState = -1;
     _syncLastRoundId = -1;
+    syncTick(); // İlk tick hemen
     if (_syncTimer) clearInterval(_syncTimer);
-    var delay = typeof firstTickDelayMs === "number" ? firstTickDelayMs : 0;
-    var startTick = function () {
-      try { syncTick(); } catch (e) { console.error("[BRIDGE] start syncTick hata:", e); }
-      _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
-    };
-    if (delay > 0) {
-      console.log("%c[BRIDGE] İlk syncTick gecikmeli başlatılıyor: " + delay + "ms", "color: orange;");
-      setTimeout(startTick, delay);
-    } else {
-      startTick();
-    }
+    _syncTimer = setInterval(syncTick, 500); // Her 500ms kontrol
   }
 
   function syncTick() {
