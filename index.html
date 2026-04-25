@@ -1,17 +1,9 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>fe-game</title><link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX///+nxBvIAAAACklEQVQI12MAAgAABAABINItbwAAAABJRU5ErkJggg=="><meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1,minimum-scale=1,maximum-scale=1,minimal-ui=true"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="format-detection" content="telephone=no"><meta name="renderer" content="webkit"><meta name="force-rendering" content="webkit"><meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"><meta name="msapplication-tap-highlight" content="no"><meta name="full-screen" content="yes"><meta name="x5-fullscreen" content="true"><meta name="360-fullscreen" content="true"><meta name="x5-page-mode" content="app"><style>html{-ms-touch-action:none}body,canvas,div{display:block;outline:0;-webkit-tap-highlight-color:transparent;user-select:none;-moz-user-select:none;-webkit-user-select:none;-ms-user-select:none;-khtml-user-select:none;-webkit-tap-highlight-color:transparent}input::-webkit-inner-spin-button,input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}body{position:absolute;top:0;left:0;width:100%;height:100%;padding:0;border:0;margin:0;cursor:default;color:transparent;background-color:transparent;text-align:center;font-family:Helvetica,Verdana,Arial,sans-serif;display:flex;flex-direction:column}canvas{background-color:transparent}#Cocos3dGameContainer,#GameCanvas,#GameDiv{width:100%;height:100%}</style></head><body>
-<div id="game-loading-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s ease;">
-  <div style="width:200px;height:200px;margin-bottom:30px;">
-    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="100" cy="100" r="90" fill="#FFF0F5"/>
-      <circle cx="100" cy="100" r="70" fill="#FFE4EC"/>
-      <text x="100" y="85" text-anchor="middle" font-size="50" fill="#E91E63">🎰</text>
-      <text x="100" y="130" text-anchor="middle" font-size="16" font-family="Arial,sans-serif" font-weight="bold" fill="#E91E63">Greedy Pink</text>
-    </svg>
+<div id="game-loading-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;background:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s ease;">
+  <div style="width:180px;height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden;">
+    <div id="game-loading-bar" style="width:0%;height:100%;background:#E91E63;border-radius:3px;transition:width 0.3s ease;"></div>
   </div>
-  <div style="width:220px;height:8px;background:#FFE0EC;border-radius:4px;overflow:hidden;box-shadow:0 2px 8px rgba(233,30,99,0.15);">
-    <div id="game-loading-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#FF4081,#E91E63,#FF80AB);border-radius:4px;transition:width 0.3s ease;"></div>
-  </div>
-  <p style="margin-top:14px;font-family:Arial,sans-serif;font-size:13px;color:#E91E63;font-weight:500;letter-spacing:0.5px;">Yükleniyor...</p>
+  <p style="margin-top:10px;font-family:Arial,sans-serif;font-size:12px;color:#999;">Yükleniyor...</p>
 </div>
 <script>
 (function(){
