@@ -667,7 +667,7 @@
             var countDown = result.countDown || 30;
             _lastInitParams = {
               roundId: _currentRoundId || 1000, state: _currentState || 1, countDown: countDown,
-              diamond: _userCoins, betingId: 0, bets: _currentBetOptions.slice(),
+              diamond: _userCoins, betingId: 0, bets: [100, 1000, 5000, 10000, 50000],
               betData: [], rank: 0, lotteryTime: 5,
               lotteryResult: result.lotteryResult || _lotteryHistory || [],
               todayWin: _todayWin, winFoodId: -1, serverTime: Date.now(),
@@ -678,7 +678,7 @@
             _gameInitDone = true;
             _lastInitParams = {
               roundId: 1000, state: 1, countDown: 30, diamond: _userCoins,
-              betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
+              betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
               lotteryTime: 5, lotteryResult: _lotteryHistory || [],
               todayWin: _todayWin, winFoodId: -1, serverTime: Date.now(),
             };
@@ -689,7 +689,7 @@
           _gameInitDone = true;
           _lastInitParams = {
             roundId: 1000, state: 1, countDown: 30, diamond: _userCoins,
-            betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
+            betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
             lotteryTime: 5, lotteryResult: [], todayWin: 0, winFoodId: -1, serverTime: Date.now(),
           };
           sendRTMToGame("greedy_baby_init", _lastInitParams);
@@ -703,7 +703,7 @@
         _gameInitDone = true;
         _lastInitParams = {
           roundId: 1000, state: 1, countDown: 30, diamond: 0,
-          betingId: 0, bets: _currentBetOptions.slice(), betData: [], rank: 0,
+          betingId: 0, bets: [100, 1000, 5000, 10000, 50000], betData: [], rank: 0,
           lotteryTime: 5, lotteryResult: [], todayWin: 0, winFoodId: -1, serverTime: Date.now(),
         };
         sendRTMToGame("greedy_baby_init", _lastInitParams);
