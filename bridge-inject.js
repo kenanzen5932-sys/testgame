@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.8";
+  var BRIDGE_VERSION = "v2.9";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -22,12 +22,50 @@
   var PIESOCKET_CLUSTER = "s15665.fra1";
 
   // Flutter'dan gelen kullanıcı bilgileri — lazily okunacak
-  var AUTH_TOKEN = "";
-  var USER_ID = "";
+  var AUTH_TOKEN = "bridge_pending";
+  var USER_ID = "bridge_user";
   var ROOM_ID = "0";
   var NICKNAME = "Oyuncu";
   var AVATAR = "";
   var _authReady = false;
+
+  // FLUTTER_USER enjeksiyonunu ANINDA yakala (Object.defineProperty)
+  var _flutterUserValue = window.FLUTTER_USER || null;
+  try {
+    // Eğer zaten set edilmişse hemen oku
+    if (_flutterUserValue && _flutterUserValue.token) {
+      AUTH_TOKEN = _flutterUserValue.token;
+      USER_ID = _flutterUserValue.userId || USER_ID;
+      ROOM_ID = _flutterUserValue.roomId || ROOM_ID;
+      NICKNAME = _flutterUserValue.nickname || NICKNAME;
+      AVATAR = _flutterUserValue.avatar || "";
+      _authReady = true;
+      console.log("%c[BRIDGE] FLUTTER_USER zaten mevcut: " + NICKNAME, "color: lime; font-weight: bold;");
+    }
+    Object.defineProperty(window, "FLUTTER_USER", {
+      get: function() { return _flutterUserValue; },
+      set: function(val) {
+        _flutterUserValue = val;
+        console.log("[GameScreen] FLUTTER_USER injected", val);
+        if (val && val.token) {
+          AUTH_TOKEN = val.token;
+          USER_ID = val.userId || USER_ID;
+          ROOM_ID = val.roomId || ROOM_ID;
+          NICKNAME = val.nickname || NICKNAME;
+          AVATAR = proxyAvatarUrl(val.avatar || "");
+          _authReady = true;
+          console.log("%c[BRIDGE] FLUTTER_USER ANINDA yakalandı: " + NICKNAME + " token=" + AUTH_TOKEN.substring(0, 10) + "...", "color: lime; font-weight: bold; font-size: 14px;");
+          // localStorage güncelle
+          try { localStorage.setItem("userInfo", JSON.stringify(getUserInfoData())); } catch(e) {}
+          // Avatar ön-yükle
+          if (AVATAR) preloadAvatar();
+        }
+      },
+      configurable: true
+    });
+  } catch(e) {
+    console.warn("[BRIDGE] FLUTTER_USER defineProperty hatası:", e);
+  }
 
   // Multiplayer state
   var _isMaster = false;
@@ -832,7 +870,7 @@
   // URL parametrelerine uid ve token ekle (globalContext.userInfo fallback)
   if (!window.location.search.includes("uid=")) {
     var injectParams = "uid=" + encodeURIComponent(USER_ID || "flutter_user") +
-      "&token=" + encodeURIComponent(AUTH_TOKEN || "flutter_token") +
+      "&token=" + encodeURIComponent((AUTH_TOKEN && AUTH_TOKEN !== "bridge_pending") ? AUTH_TOKEN : "flutter_token") +
       "&roomId=" + encodeURIComponent(ROOM_ID || "0") +
       "&betVersion=1";
     var newUrl = window.location.pathname + "?" + injectParams + window.location.hash;
