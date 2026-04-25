@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/game-engine-v2",
+      "destination": "https://rotriajxffiwouamtocp.supabase.co/functions/v1/game-engine-v2"
+    },
+    {
       "source": "/avatar-proxy/:path*",
       "destination": "https://cdn.apexparty.live/:path*"
     },

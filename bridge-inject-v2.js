@@ -15,7 +15,8 @@
   // ============================================================
   var SUPABASE_URL = "https://rotriajxffiwouamtocp.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJvdHJpYWp4ZmZpd291YW10b2NwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MjI3NTAsImV4cCI6MjA4NzE5ODc1MH0.bTu0eeyc1ndOAEZttV8AcCauureUxvJLlzrDOllvxEM";
-  var EDGE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/game-engine-v2";
+  var EDGE_FUNCTION_URL = (location.origin || "") + "/api/game-engine-v2";
+  var _bridgeStartTime = Date.now();
   var PIESOCKET_API_KEY = "9CyPAVbTkPvoFVsLScz32Ucq4slVz9J4a6yOwfby";
   var PIESOCKET_CLUSTER = "s15665.fra1";
   var GLOBAL_CHANNEL = "greedy-niva-global";
@@ -175,11 +176,14 @@
       if (window.parent && window.parent.postMessage) window.parent.postMessage(JSON.stringify({ type: "coins_update", coins: coins }), "*");
     } catch (e) {}
   }
-  function notifyFlutterClose() {
+  function notifyFlutterClose(caller) {
+    var elapsed = Date.now() - _bridgeStartTime;
+    if (elapsed < 15000) { console.warn("[BRIDGE] close BLOCKED (too early: " + elapsed + "ms) caller=" + (caller||"?")); return; }
     if (!notifyFlutterClose._lastAt) notifyFlutterClose._lastAt = 0;
     var now = Date.now();
     if (now - notifyFlutterClose._lastAt < 1500) return;
     notifyFlutterClose._lastAt = now;
+    console.warn("[BRIDGE] notifyFlutterClose fired, caller=" + (caller||"?"));
     try {
       if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) window.flutter_inappwebview.callHandler("onGameClose", {});
       if (window.parent && window.parent.postMessage) window.parent.postMessage(JSON.stringify({ type: "game_close" }), "*");
@@ -499,7 +503,7 @@
     "getRoomId": function() { refreshUserFromFlutter(); return ROOM_ID; },
     "getAppRequestHost": SUPABASE_URL,
     "closeLoadingPage": "",
-    "closePage": function() { notifyFlutterClose(); return ""; },
+    "closePage": function() { notifyFlutterClose("FUN_METHODS.closePage"); return ""; },
     "showRechargeDialog": function() { notifyFlutterOpenCoinsPage(); return ""; },
     "jumpToTarget": "", "speakerOperation": "", "micOperation": "",
     "isNativeAsset": "false", "event_webview_success": "",
@@ -520,7 +524,7 @@
       var combined = JSON.stringify(parsed).toLowerCase();
       if (combined.indexOf("recharge") !== -1 || combined.indexOf("diamond") !== -1 || combined.indexOf("topup") !== -1 || combined.indexOf("wallet") !== -1 || combined.indexOf("coin") !== -1 || combined.indexOf("shop") !== -1) notifyFlutterOpenCoinsPage();
       var action = ((parsed && (parsed.action || parsed.method || parsed.name || parsed.cmd)) || "").toString().toLowerCase();
-      if (action === "closepage" || action === "close_page" || action === "game_close") notifyFlutterClose();
+      if (action === "closepage" || action === "close_page" || action === "game_close") notifyFlutterClose("h5ToNative." + action);
     } catch (e) {}
   };
 
@@ -531,7 +535,7 @@
     "getUserInfo": function() { return wrapBridgeResponse(getUserInfoData()); },
     "getDeviceInfo": wrapBridgeResponse({ deviceId: "flutter_device", os: "web", osVersion: "android", appVersion: "9.9.9", packageName: "com.greedy.niva", channel: "flutter" }),
     "closeLoadingPage": "",
-    "closePage": function() { notifyFlutterClose(); return ""; },
+    "closePage": function() { notifyFlutterClose("PROMPT.closePage"); return ""; },
     "getNetworkState": wrapBridgeResponse("1"), "getLanguage": wrapBridgeResponse("TR"), "getStatusBarHeight": wrapBridgeResponse("0"),
     "showRechargeDialog": function() { notifyFlutterOpenCoinsPage(); return ""; },
     "popUpBottomRecharge": function() { notifyFlutterOpenCoinsPage(); return ""; },
@@ -545,7 +549,7 @@
     if (PROMPT_RESPONSES.hasOwnProperty(method)) { var resp = PROMPT_RESPONSES[method]; return typeof resp === "function" ? resp() : (resp || ""); }
     var ml = (method || "").toLowerCase();
     if (ml.indexOf("recharge") !== -1 || ml.indexOf("diamond") !== -1 || ml.indexOf("topup") !== -1 || ml.indexOf("wallet") !== -1 || ml.indexOf("shop") !== -1) notifyFlutterOpenCoinsPage();
-    if (ml === "closepage" || ml === "close_page" || ml === "game_close") notifyFlutterClose();
+    if (ml === "closepage" || ml === "close_page" || ml === "game_close") notifyFlutterClose("prompt." + ml);
     return wrapBridgeResponse({});
   };
 
