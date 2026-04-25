@@ -661,10 +661,6 @@
   console.log = function () {
     var msg = arguments[0];
     if (isAudioSpam(msg)) return;
-    // Oyun sahnesi yüklendiğinde loading ekranını kapat
-    if (typeof msg === "string" && msg.indexOf("main_onLoad") !== -1) {
-      if (window._hideLoadingScreen) window._hideLoadingScreen();
-    }
     _origLog.apply(console, arguments);
   };
   var _origWarn = console.warn;
@@ -1109,6 +1105,7 @@
       });
     } catch(fatalErr) {
       console.error("[BRIDGE] handleGameInit FATAL HATA:", fatalErr, fatalErr.stack || "");
+      // Fatal hata — tekrar denenebilir
     }
   }
 
