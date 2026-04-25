@@ -117,7 +117,7 @@
   var _socket = null;
   var _heartbeatTimer = null;
   var _players = {};
-  var _currentBetOptions = [500, 50000, 200000, 500000, 1000000];
+  var _currentBetOptions = [100, 1000, 5000, 10000, 50000];
 
   function setBetOptionsFromServer(options) {
     if (!Array.isArray(options) || options.length < 5) return;
@@ -138,7 +138,7 @@
 
   function normalizeBetAmount(rawAmount) {
     var amount = parseInt(rawAmount, 10);
-    if (!isFinite(amount) || amount <= 0) return _currentBetOptions[0] || 500;
+    if (!isFinite(amount) || amount <= 0) return _currentBetOptions[0] || 100;
     for (var i = 0; i < _currentBetOptions.length; i++) {
       if (amount === _currentBetOptions[i]) return amount;
     }
@@ -785,7 +785,7 @@
     if (betDataArr.length === 0) return;
 
     var betFoodId = betDataArr[0].foodId || 0;
-    var rawBetAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || _currentBetOptions[0] || 500;
+    var rawBetAmount = (betDataArr[0].bets && betDataArr[0].bets[0]) || _currentBetOptions[0] || 100;
     var betAmount = normalizeBetAmount(rawBetAmount);
 
     if (_userCoins < betAmount) {
@@ -924,11 +924,11 @@
           if (!lbl || !lbl.string) continue;
 
           // Force chip labels to server-configured bet options
-          if (lbl.string === "100" || lbl.string === "500") { lbl.string = formatBetShort(_currentBetOptions[0] || 500); continue; }
-          if (lbl.string === "1K" || lbl.string === "1k" || lbl.string === "1000") { lbl.string = formatBetShort(_currentBetOptions[1] || 50000); continue; }
-          if (lbl.string === "5K" || lbl.string === "5k" || lbl.string === "5000" || lbl.string === "200000") { lbl.string = formatBetShort(_currentBetOptions[2] || 200000); continue; }
-          if (lbl.string === "10K" || lbl.string === "10k" || lbl.string === "10000" || lbl.string === "500000") { lbl.string = formatBetShort(_currentBetOptions[3] || 500000); continue; }
-          if (lbl.string === "50K" || lbl.string === "50k" || lbl.string === "50000" || lbl.string === "1000000" || lbl.string === "1M" || lbl.string === "1m") { lbl.string = formatBetShort(_currentBetOptions[4] || 1000000); continue; }
+          if (lbl.string === "100" || lbl.string === "500") { lbl.string = formatBetShort(_currentBetOptions[0] || 100); continue; }
+          if (lbl.string === "1K" || lbl.string === "1k" || lbl.string === "1000") { lbl.string = formatBetShort(_currentBetOptions[1] || 1000); continue; }
+          if (lbl.string === "5K" || lbl.string === "5k" || lbl.string === "5000" || lbl.string === "200000") { lbl.string = formatBetShort(_currentBetOptions[2] || 5000); continue; }
+          if (lbl.string === "10K" || lbl.string === "10k" || lbl.string === "10000" || lbl.string === "500000") { lbl.string = formatBetShort(_currentBetOptions[3] || 10000); continue; }
+          if (lbl.string === "50K" || lbl.string === "50k" || lbl.string === "50000" || lbl.string === "1000000" || lbl.string === "1M" || lbl.string === "1m") { lbl.string = formatBetShort(_currentBetOptions[4] || 50000); continue; }
 
           if (TR_MAP[lbl.string]) { lbl.string = TR_MAP[lbl.string]; continue; }
           var matched = false;
