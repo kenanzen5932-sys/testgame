@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.7";
+  var BRIDGE_VERSION = "v2.8";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1086,15 +1086,13 @@
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti #" + _rtmSetCount + " → RTM hazır!", "color: lime; font-weight: bold;");
 
         if (_rtmSetCount === 1) {
-          // İlk set: handleGameInit başlat (PieSocket, Supabase, vb.)
-          setTimeout(function () {
-            try {
-              if (!_gameInitDone) {
-                console.log("%c[BRIDGE] RTM #1 → 500ms → handleGameInit", "color: orange; font-weight: bold;");
-                handleGameInit();
-              }
-            } catch (e) { console.error("[BRIDGE] RTM timer init hata:", e); }
-          }, 500);
+          // İlk set: handleGameInit HEMEN başlat
+          try {
+            if (!_gameInitDone) {
+              console.log("%c[BRIDGE] RTM #1 → HEMEN handleGameInit", "color: orange; font-weight: bold;");
+              handleGameInit();
+            }
+          } catch (e) { console.error("[BRIDGE] RTM init hata:", e); }
         } else if (_rtmSetCount >= 2 && _lastInitParams) {
           // İkinci+ set: Oyun sahnesi yüklendi, init verilerini TEKRAR gönder
           setTimeout(function () {
@@ -1115,17 +1113,17 @@
     console.error("[BRIDGE] RTMResponseMsg defineProperty hatası:", dpErr);
   }
 
-  // Yöntem 2: 2s güvenlik timeout
+  // Yöntem 2: 1s güvenlik timeout
   setTimeout(function () {
     try {
       if (!_gameInitDone) {
-        console.log("%c[BRIDGE] 2s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+        console.log("%c[BRIDGE] 1s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
         handleGameInit();
       } else {
-        console.log("%c[BRIDGE] 2s timeout → zaten init olmuş, skip", "color: gray;");
+        console.log("%c[BRIDGE] 1s timeout → zaten init olmuş, skip", "color: gray;");
       }
-    } catch (e) { console.error("[BRIDGE] 2s timeout init hata:", e); }
-  }, 2000);
+    } catch (e) { console.error("[BRIDGE] 1s timeout init hata:", e); }
+  }, 1000);
 
   // Yöntem 3: 5s mutlak fallback
   setTimeout(function () {
