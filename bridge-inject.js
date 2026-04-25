@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.9";
+  var BRIDGE_VERSION = "v3.0";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1124,9 +1124,17 @@
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti #" + _rtmSetCount + " → RTM hazır!", "color: lime; font-weight: bold;");
 
         if (_rtmSetCount === 1) {
-          // İlk set: handleGameInit HEMEN başlat
+          // İlk set: oyun RTM hazır
           try {
-            if (!_gameInitDone) {
+            if (_gameInitDone && _lastInitParams) {
+              // Init zaten yapıldı ama BLOCKED olmuştu — şimdi tekrar gönder
+              console.log("%c[BRIDGE] RTM #1 → Init zaten hazır, BLOCKED verileri gönderiliyor", "color: lime; font-weight: bold; font-size: 14px;");
+              setTimeout(function() {
+                try {
+                  if (_lastInitParams) sendRTMToGame("greedy_baby_init", _lastInitParams);
+                } catch(e) {}
+              }, 200);
+            } else if (!_gameInitDone) {
               console.log("%c[BRIDGE] RTM #1 → HEMEN handleGameInit", "color: orange; font-weight: bold;");
               handleGameInit();
             }
