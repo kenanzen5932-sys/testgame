@@ -661,6 +661,10 @@
   console.log = function () {
     var msg = arguments[0];
     if (isAudioSpam(msg)) return;
+    // Oyun sahnesi yüklendiğinde loading ekranını kapat
+    if (typeof msg === "string" && msg.indexOf("main_onLoad") !== -1) {
+      if (window._hideLoadingScreen) window._hideLoadingScreen();
+    }
     _origLog.apply(console, arguments);
   };
   var _origWarn = console.warn;
@@ -1083,14 +1087,11 @@
           _currentState = syncInfo.state;
           console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
           startLocalGameLoop();
-          // Loading ekranını kapat
-          if (window._hideLoadingScreen) window._hideLoadingScreen();
         }).catch(function(err) {
           console.error("[BRIDGE] get_state HATA:", err);
           var syncInfo = getSyncRoundInfo();
           sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
           startLocalGameLoop();
-          if (window._hideLoadingScreen) window._hideLoadingScreen();
         });
 
         console.log("%c[BRIDGE] PieSocket bağlantısı başlatılıyor...", "color: #2196F3;");
@@ -1105,11 +1106,9 @@
         connectPieSocket();
         startMasterCheck();
         _gameInitDone = true;
-        if (window._hideLoadingScreen) window._hideLoadingScreen();
       });
     } catch(fatalErr) {
       console.error("[BRIDGE] handleGameInit FATAL HATA:", fatalErr, fatalErr.stack || "");
-      if (window._hideLoadingScreen) window._hideLoadingScreen();
     }
   }
 
