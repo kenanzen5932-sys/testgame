@@ -11,38 +11,6 @@
   console.log("%c[BRIDGE] Greedy Niva AUTHORITATIVE bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
-  // 0) GPU CRASH PREVENTION — reduce WebGL stress for emulators
-  // ============================================================
-  try {
-    var _origGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function(type, attrs) {
-      if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") {
-        attrs = Object.assign({}, attrs || {}, {
-          antialias: false,
-          powerPreference: "low-power",
-          failIfMajorPerformanceCaveat: false,
-          preserveDrawingBuffer: false,
-          stencil: false,
-          premultipliedAlpha: false,
-          alpha: false,
-        });
-        console.log("[BRIDGE] WebGL context patched (low-power, no-AA)");
-      }
-      return _origGetContext.call(this, type, attrs);
-    };
-  } catch(e) {}
-
-  // Global error handler — prevent uncaught JS errors from killing renderer
-  window.onerror = function(msg, url, line, col, error) {
-    console.warn("[BRIDGE] Caught global error:", msg, "at", url, line);
-    return true; // suppress propagation
-  };
-  window.addEventListener("unhandledrejection", function(e) {
-    e.preventDefault();
-    console.warn("[BRIDGE] Caught unhandled rejection:", e.reason);
-  });
-
-  // ============================================================
   // 1) CONFIG
   // ============================================================
   var SUPABASE_URL = "https://rotriajxffiwouamtocp.supabase.co";
