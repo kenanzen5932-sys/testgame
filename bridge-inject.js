@@ -9,7 +9,7 @@
  */
 (function () {
   "use strict";
-  var BRIDGE_VERSION = "v2.5";
+  var BRIDGE_VERSION = "v2.6";
   console.log("%c[BRIDGE] Greedy Niva bridge aktif! " + BRIDGE_VERSION, "color: lime; font-weight: bold; font-size: 14px;");
 
   // ============================================================
@@ -1021,50 +1021,53 @@
   // ============================================================
   // 8) OYUN INIT — İlk bağlantı
   // ============================================================
+  var _initAttempts = 0;
   function handleGameInit() {
     try {
       if (_gameInitDone) { console.log("%c[BRIDGE] handleGameInit zaten çalıştı, skip", "color: gray;"); return; }
-      _gameInitDone = true;
-      console.log("%c[BRIDGE] ████ handleGameInit BAŞLATILIYOR ████ gameId=" + _gameId + " authToken=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) + "..." : "YOK") + " userId=" + USER_ID.substring(0, 8), "color: lime; font-weight: bold; font-size: 14px;");
+      _initAttempts++;
+      if (_initAttempts > 5) { console.error("[BRIDGE] handleGameInit 5 kez denendi, vazgeçiliyor"); return; }
+      console.log("%c[BRIDGE] ████ handleGameInit BAŞLATILIYOR ████ deneme=" + _initAttempts + " authToken=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) + "..." : "YOK") + " userId=" + (USER_ID ? USER_ID.substring(0, 8) : "YOK"), "color: lime; font-weight: bold; font-size: 14px;");
       getAuthFromFlutter().then(function () {
-        console.log("%c[BRIDGE] Auth alındı → get_state çağrılıyor...", "color: #4CAF50;");
-        // Bakiye al
+        console.log("%c[BRIDGE] Auth alındı → get_state çağrılıyor... token=" + (AUTH_TOKEN ? AUTH_TOKEN.substring(0, 12) : "YOK"), "color: #4CAF50;");
         callGameEngine("get_state").then(function (result) {
-          console.log("%c[BRIDGE] get_state sonucu:", "color: #4CAF50;", result);
+          console.log("%c[BRIDGE] get_state sonucu:", "color: #4CAF50;", JSON.stringify(result).substring(0, 200));
           if (result && result.success) {
             _userCoins = result.coins || 0;
+            _gameInitDone = true; // BAŞARILI — artık tekrar denenmez
+            console.log("%c[BRIDGE] ✓ INIT BAŞARILI — coins=" + _userCoins, "color: lime; font-weight: bold; font-size: 16px;");
+          } else {
+            console.warn("[BRIDGE] get_state başarısız:", result);
           }
-          // Init mesajını HEMEN gönder — oyun bekleyemez
           var syncInfo = getSyncRoundInfo();
           sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, result, syncInfo.countDown);
           _currentRoundId = syncInfo.roundId;
           _currentState = syncInfo.state;
-          // Sync loop'u HEMEN başlat — PieSocket beklenmeden
-          console.log("%c[BRIDGE] Sync loop hemen başlatılıyor (PieSocket beklenmeden)", "color: yellow;");
+          console.log("%c[BRIDGE] Sync loop başlatılıyor", "color: yellow;");
           startLocalGameLoop();
         }).catch(function(err) {
           console.error("[BRIDGE] get_state HATA:", err);
-          // Hata olsa bile sync loop başlat
           var syncInfo = getSyncRoundInfo();
           sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
           startLocalGameLoop();
         });
 
-        // PieSocket bağlan — master election otomatik olur
         console.log("%c[BRIDGE] PieSocket bağlantısı başlatılıyor...", "color: #2196F3;");
         connectPieSocket();
         startMasterCheck();
+        _gameInitDone = true; // Auth başarılı, PieSocket başladı
       }).catch(function(authErr) {
         console.error("[BRIDGE] getAuthFromFlutter HATA:", authErr);
-        // Auth başarısız olsa bile devam et
         var syncInfo = getSyncRoundInfo();
         sendInitToGame({ id: syncInfo.roundId, state: syncInfo.state }, null, syncInfo.countDown);
         startLocalGameLoop();
         connectPieSocket();
         startMasterCheck();
+        _gameInitDone = true;
       });
     } catch(fatalErr) {
       console.error("[BRIDGE] handleGameInit FATAL HATA:", fatalErr, fatalErr.stack || "");
+      // Fatal hata — tekrar denenebilir
     }
   }
 
@@ -1079,14 +1082,15 @@
       set: function (fn) {
         _realRTMResponseMsg = fn;
         console.log("%c[BRIDGE] Oyun RTMResponseMsg set etti → RTM hazır!", "color: lime; font-weight: bold;");
+        // HEMEN init et — 500ms sonra (oyunun hazırlanması için kısa bekleme)
         setTimeout(function () {
           try {
             if (!_gameInitDone) {
-              console.log("%c[BRIDGE] RTMResponseMsg 3s timer → handleGameInit", "color: orange; font-weight: bold;");
+              console.log("%c[BRIDGE] RTM 500ms timer → handleGameInit", "color: orange; font-weight: bold;");
               handleGameInit();
             }
           } catch (e) { console.error("[BRIDGE] RTM timer init hata:", e); }
-        }, 3000);
+        }, 500);
       },
       get: function () { return _realRTMResponseMsg; },
       configurable: true
@@ -1096,27 +1100,27 @@
     console.error("[BRIDGE] RTMResponseMsg defineProperty hatası:", dpErr);
   }
 
-  // Yöntem 2: 5s güvenlik timeout — en basit ve güvenilir
+  // Yöntem 2: 2s güvenlik timeout
   setTimeout(function () {
     try {
       if (!_gameInitDone) {
-        console.log("%c[BRIDGE] 5s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
+        console.log("%c[BRIDGE] 2s timeout → handleGameInit zorla tetikleniyor", "color: orange; font-weight: bold;");
         handleGameInit();
       } else {
-        console.log("%c[BRIDGE] 5s timeout → zaten init olmuş, skip", "color: gray;");
+        console.log("%c[BRIDGE] 2s timeout → zaten init olmuş, skip", "color: gray;");
       }
-    } catch (e) { console.error("[BRIDGE] 5s timeout init hata:", e); }
-  }, 5000);
+    } catch (e) { console.error("[BRIDGE] 2s timeout init hata:", e); }
+  }, 2000);
 
-  // Yöntem 3: 10s mutlak fallback
+  // Yöntem 3: 5s mutlak fallback
   setTimeout(function () {
     try {
       if (!_gameInitDone) {
-        console.log("%c[BRIDGE] 10s MUTLAK fallback → handleGameInit", "color: red; font-weight: bold;");
+        console.log("%c[BRIDGE] 5s MUTLAK fallback → handleGameInit", "color: red; font-weight: bold;");
         handleGameInit();
       }
-    } catch (e) { console.error("[BRIDGE] 10s fallback init hata:", e); }
-  }, 10000);
+    } catch (e) { console.error("[BRIDGE] 5s fallback init hata:", e); }
+  }, 5000);
 
   // Master olarak oyun döngüsünü başlat
   function startMasterGameLoop() {
