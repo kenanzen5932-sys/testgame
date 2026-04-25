@@ -176,6 +176,10 @@
     } catch (e) {}
   }
   function notifyFlutterClose() {
+    if (!notifyFlutterClose._lastAt) notifyFlutterClose._lastAt = 0;
+    var now = Date.now();
+    if (now - notifyFlutterClose._lastAt < 1500) return;
+    notifyFlutterClose._lastAt = now;
     try {
       if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) window.flutter_inappwebview.callHandler("onGameClose", {});
       if (window.parent && window.parent.postMessage) window.parent.postMessage(JSON.stringify({ type: "game_close" }), "*");
@@ -515,7 +519,8 @@
       var parsed = typeof data === "string" ? JSON.parse(data) : data;
       var combined = JSON.stringify(parsed).toLowerCase();
       if (combined.indexOf("recharge") !== -1 || combined.indexOf("diamond") !== -1 || combined.indexOf("topup") !== -1 || combined.indexOf("wallet") !== -1 || combined.indexOf("coin") !== -1 || combined.indexOf("shop") !== -1) notifyFlutterOpenCoinsPage();
-      if (combined.indexOf("close") !== -1 && combined.indexOf("loading") === -1) notifyFlutterClose();
+      var action = ((parsed && (parsed.action || parsed.method || parsed.name || parsed.cmd)) || "").toString().toLowerCase();
+      if (action === "closepage" || action === "close_page" || action === "game_close") notifyFlutterClose();
     } catch (e) {}
   };
 
@@ -540,7 +545,7 @@
     if (PROMPT_RESPONSES.hasOwnProperty(method)) { var resp = PROMPT_RESPONSES[method]; return typeof resp === "function" ? resp() : (resp || ""); }
     var ml = (method || "").toLowerCase();
     if (ml.indexOf("recharge") !== -1 || ml.indexOf("diamond") !== -1 || ml.indexOf("topup") !== -1 || ml.indexOf("wallet") !== -1 || ml.indexOf("shop") !== -1) notifyFlutterOpenCoinsPage();
-    if (ml.indexOf("close") !== -1 && ml.indexOf("loading") === -1) notifyFlutterClose();
+    if (ml === "closepage" || ml === "close_page" || ml === "game_close") notifyFlutterClose();
     return wrapBridgeResponse({});
   };
 
